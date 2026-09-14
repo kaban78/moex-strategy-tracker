@@ -18,7 +18,8 @@
 - подтягивает состав и веса индекса IMOEX с MOEX ISS (бесплатно, без ключа);
 - позволяет ввести собственный портфель вручную;
 - считает отклонение портфеля от выбранной стратегии;
-- показывает арифметику для устранения отклонения при пополнении.
+- показывает арифметику для устранения отклонения при пополнении;
+- рисует свечной график по каждому тикеру (lightweight-charts).
 
 **Это калькулятор, не инвестиционный советник.** Приложение не даёт
 индивидуальных инвестиционных рекомендаций, не строит инвестиционный
@@ -54,7 +55,7 @@
    лот 5 543 руб.) — отсеиваются.
 3. Greedy: набираем бумаги сверху вниз до покрытия 99% веса индекса.
 4. Перенормировка весов на удержанные бумаги.
-5. Оценка tracking error: sigma_idio × sqrt(sum w_i²).
+5. Оценка tracking error: `sigma_idio × sqrt(sum w_i^2)`.
 
 Пропущенные бумаги — это **omission weight**. При 100 000 руб. он
 составляет 5–15%, при 2 млн — меньше 1%. С ростом капитала репликация
@@ -72,11 +73,11 @@ Cash drag после двух проходов — меньше 0.5% портф�
 ## Стек
 
 - **Next.js 16** (App Router, RSC, Turbopack)
-- **TypeScript 5.9**
+- **TypeScript** 5.9
 - **Tailwind CSS 4** + **shadcn/ui** (Radix, Nova preset)
 - **Zustand** — состояние портфеля (localStorage)
-- **Recharts** — графики
-- **Vitest** — тесты (40 зелёных)
+- **lightweight-charts** — свечные графики (TradingView)
+- **Vitest** — тесты (36 зелёных)
 - **pnpm** — пакетный менеджер
 
 ---
@@ -89,66 +90,156 @@ cd moex-strategy-tracker
 pnpm install
 pnpm dev
 
-Юридическая рамка
+Открой http://localhost:3000
+
+Если включён VPN и запрос к MOEX ISS падает — выключи VPN на время
+загрузки. Это связано с TLS-таймаутами при маршрутизации через TUN.
+Команды
+bash
+
+pnpm dev          # dev-сервер
+pnpm build        # production build
+pnpm start        # production-сервер
+pnpm test         # тесты
+pnpm test:watch   # тесты в watch-режиме
+pnpm typecheck    # tsc --noEmit
+
+Структура
 text
 
-## Юридическая рамка
+src/
+├── app/
+│   ├── layout.tsx               # root layout + ThemeProvider
+│   ├── page.tsx                 # server component: fetch universe + render
+│   └── api/
+│       ├── universe/route.ts    # прокси MOEX ISS (состав + цены)
+│       └── history/[ticker]/    # свечи по бумаге
+├── components/
+│   ├── dashboard/
+│   │   ├── dashboard.tsx            # композиция, состояние
+│   │   ├── target-portfolio-card.tsx
+│   │   ├── drift-card.tsx
+│   │   ├── rebalance-card.tsx
+│   │   └── ticker-button.tsx        # клик + prefetch
+│   ├── price-chart/
+│   │   ├── price-chart-dialog.tsx   # композиция
+│   │   ├── chart-header.tsx
+│   │   ├── chart-toolbar.tsx
+│   │   ├── chart-resize-handle.tsx
+│   │   ├── palettes.ts
+│   │   ├── constants.ts
+│   │   ├── types.ts
+│   │   └── hooks/
+│   │       ├── use-chart.ts         # lifecycle lightweight-charts
+│   │       ├── use-chart-data.ts    # fetch + polling
+│   │       ├── use-chart-range.ts   # visible range
+│   │       └── use-window-drag.ts   # drag + resize
+│   ├── portfolio-editor.tsx
+│   ├── theme-toggle.tsx
+│   └── ui/                          # shadcn/ui
+├── lib/
+│   ├── engine/
+│   │   ├── drift.ts                 # отклонения
+│   │   ├── rebalance.ts             # два прохода: greedy + top-up
+│   │   └── target-weights.ts        # веса -> целые лоты
+│   ├── legal/
+│   │   └── disclaimers.ts           # единственный источник правды
+│   ├── moex/
+│   │   ├── client.ts                # HTTP-клиент ISS с пагинацией
+│   │   ├── parse.ts                 # парсер ответов ISS
+│   │   ├── history-cache.ts         # клиентский кэш свечей
+│   │   └── links.ts                 # ссылки на moex.com
+│   ├── universe/
+│   │   └── select.ts                # сборка портфеля (sampling)
+│   └── format.ts
+├── stores/
+│   └── portfolio.ts                 # zustand + localStorage
+└── types/
+    └── index.ts                     # доменные типы
 
-Приложение **не является** инвестиционным советником и **не предоставляет**
+Юридическая рамка
+
+Приложение не является инвестиционным советником и не предоставляет
 индивидуальных инвестиционных рекомендаций (ИИР) в смысле
 ст. 6.1 Федерального закона от 22.04.1996 № 39-ФЗ «О рынке ценных бумаг».
 
 Принципы проектирования:
 
-1. **Нет инвестиционного профиля.** Приложение не спрашивает у
-   пользователя доходность, риск, горизонт.
-2. **Стратегия — шаблон.** Репликация IMOEX — фиксированный алгоритм.
-3. **Формулировки.** Вместо «рекомендую купить X» — «отклонение от
-   целевого веса составляет −3.2%, для устранения требуется 7 лотов».
-4. **Нет автоисполнения.** Приложение не имеет доступа к брокерскому
-   API на запись.
-5. **Дисклеймер на каждом экране.** См. src/lib/legal/disclaimers.ts.
+    Нет инвестиционного профиля. Приложение не спрашивает у
+    пользователя доходность, риск, горизонт.
 
----
+    Стратегия — шаблон. Репликация IMOEX — фиксированный алгоритм.
 
-## Источники
+    Формулировки. Вместо «рекомендую купить X» — «отклонение от
+    целевого веса составляет −3.2%, для устранения требуется 7 лотов».
 
-- Statman, M. (1987). How Many Stocks Make a Diversified Portfolio?
-  Journal of Financial and Quantitative Analysis, 22(3), 353–363.
-- Domian, D., Louton, D., Racine, M. (2007). Diversification in Portfolios
-  of Individual Stocks: 100 Stocks Are Not Enough. The Financial Review,
-  42(4), 557–570.
-- Zaimovic, A., Omanovic, A., Arnaut-Berilo, A. (2021). How Many Stocks
-  Are Needed for Diversification: A Review of Literature. Journal of Risk
-  and Financial Management, 14(11).
-- DeMiguel, V., Garlappi, L., Uppal, R. (2009). Optimal Versus Naive
-  Diversification: How Inefficient Is the 1/N Portfolio Strategy?
-  Review of Financial Studies, 22(5), 1915–1953.
-- Huij, J., Blitz, D. (2012). Global style portfolios and the
-  diversification return. Emerging Markets Review.
-- MOEX ISS API. https://iss.moex.com/iss/reference/
-- Кодекс этики в сфере ИИ на финансовом рынке (Банк России, август 2026).
+    Нет автоисполнения. Приложение не имеет доступа к брокерскому
+    API на запись.
 
----
+    Дисклеймер на каждом экране. См. src/lib/legal/disclaimers.ts.
 
-## Roadmap
+Источники
 
-- [x] Юридический фундамент
-- [x] MOEX ISS client
-- [x] Репликация IMOEX (sampling + lot feasibility)
-- [x] Ребалансировка через пополнения
-- [x] Dashboard
-- [ ] Ссылки на MOEX по тикеру
-- [ ] График цены акции
-- [ ] Импорт CSV из брокера
-- [ ] Дивидендный календарь
-- [ ] Журнал сделок + график портфеля
-- [ ] Бэктест на истории
-- [ ] Сравнение с БПИФ (SBMX, TMOS, EQMX)
-- [ ] Калькулятор ИИС-3
+    Statman, M. (1987). How Many Stocks Make a Diversified Portfolio?
+    Journal of Financial and Quantitative Analysis, 22(3), 353–363.
 
----
+    Domian, D., Louton, D., Racine, M. (2007). Diversification in Portfolios
+    of Individual Stocks: 100 Stocks Are Not Enough. The Financial Review,
+    42(4), 557–570.
 
-## Лицензия
+    DeMiguel, V., Garlappi, L., Uppal, R. (2009). Optimal Versus Naive
+    Diversification: How Inefficient Is the 1/N Portfolio Strategy?
+    Review of Financial Studies, 22(5), 1915–1953.
+
+    Huij, J., Blitz, D. (2012). Global style portfolios and the
+    diversification return. Emerging Markets Review.
+
+    MOEX ISS API. https://iss.moex.com/iss/reference/
+
+    Кодекс этики в сфере ИИ на финансовом рынке (Банк России, август 2026).
+
+Roadmap
+
+    ☑
+
+    Юридический фундамент
+    ☑
+
+    MOEX ISS client с пагинацией
+    ☑
+
+    Репликация IMOEX (sampling + lot feasibility)
+    ☑
+
+    Ребалансировка через пополнения (greedy + top-up)
+    ☑
+
+    Dashboard
+    ☑
+
+    Свечной график с интервалами и диапазонами
+    ☑
+
+    Светлая и тёмная темы
+    □
+
+    Импорт CSV из брокера
+    □
+
+    Дивидендный календарь
+    □
+
+    Журнал сделок + график портфеля
+    □
+
+    Бэктест на истории
+    □
+
+    Сравнение с БПИФ (SBMX, TMOS, EQMX)
+    □
+
+    Калькулятор ИИС-3
+
+Лицензия
 
 MIT — см. LICENSE.
