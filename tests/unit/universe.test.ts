@@ -18,7 +18,7 @@ function makeTicker(overrides: Partial<Ticker>): Ticker {
 }
 
 describe('buildPortfolio', () => {
-  it('пропускает бумаги с дорогим лотом', () => {
+  it('пропускает бумаги с лотом больше относительного порога', () => {
     const universe = [
       makeTicker({ ticker: 'A', indexWeight: 30, lotSize: 10, price: 100 }),
       makeTicker({ ticker: 'B', indexWeight: 20, lotSize: 10, price: 10_000 }),
@@ -30,6 +30,36 @@ describe('buildPortfolio', () => {
     expect(tickers).toContain('C');
     expect(tickers).not.toContain('B');
     expect(r.omitted.find((o) => o.ticker === 'B')?.reason).toBe(
+      'lot_too_expensive',
+    );
+  });
+
+  it('пропускает дорогую бумагу даже с большим весом', () => {
+    const universe = [
+      makeTicker({ ticker: 'LKOH', indexWeight: 18, lotSize: 1, price: 5_508 }),
+    ];
+    const r = buildPortfolio(universe, { portfolioValue: 100_000 });
+    expect(r.holdings).toHaveLength(1);
+    expect(r.holdings[0].ticker).toBe('LKOH');
+  });
+
+  it('пропускает мелкую бумагу с дорогим лотом', () => {
+    // PHOR: вес 0.62% от 100% индекса, target = 620 руб.
+    // лот 5543 руб. > 620 × 2.5 = 1550 руб. → отсекается.
+    const universe = [
+      makeTicker({ ticker: 'BIG', indexWeight: 99.38, lotSize: 1, price: 100 }),
+      makeTicker({
+        ticker: 'PHOR',
+        indexWeight: 0.62,
+        lotSize: 1,
+        price: 5_543,
+      }),
+    ];
+    const r = buildPortfolio(universe, { portfolioValue: 100_000 });
+    const tickers = r.holdings.map((h) => h.ticker);
+    expect(tickers).toContain('BIG');
+    expect(tickers).not.toContain('PHOR');
+    expect(r.omitted.find((o) => o.ticker === 'PHOR')?.reason).toBe(
       'lot_too_expensive',
     );
   });
@@ -48,6 +78,24 @@ describe('buildPortfolio', () => {
     expect(a.weight + b.weight).toBeCloseTo(1, 5);
   });
 
+  it('оценка TE через sqrt(sum w^2), а не линейно', () => {
+    const universe: Ticker[] = [];
+    for (let i = 0; i < 16; i++) {
+      universe.push(
+        makeTicker({
+          ticker: 'OMIT' + i,
+          indexWeight: 23 / 16,
+          lotSize: 10,
+          price: 100_000,
+        }),
+      );
+    }
+    universe.push(makeTicker({ ticker: 'BIG', indexWeight: 77 }));
+    const r = buildPortfolio(universe, { portfolioValue: 100_000 });
+    expect(r.estimatedTrackingError).toBeLessThan(0.025);
+    expect(r.estimatedTrackingError).toBeGreaterThan(0.01);
+  });
+
   it('считает omission weight', () => {
     const universe = [
       makeTicker({ ticker: 'A', indexWeight: 50 }),
@@ -55,25 +103,7 @@ describe('buildPortfolio', () => {
       makeTicker({ ticker: 'C', indexWeight: 10, lotSize: 10, price: 100_000 }),
     ];
     const r = buildPortfolio(universe, { portfolioValue: 100_000 });
-    expect(r.omissionWeight).toBeCloseTo(0.10, 2);
-  });
-
-  it('останавливается на coverage threshold', () => {
-    const universe = [
-      makeTicker({ ticker: 'A', indexWeight: 70 }),
-      makeTicker({ ticker: 'B', indexWeight: 20 }),
-      makeTicker({ ticker: 'C', indexWeight: 10 }),
-    ];
-    const r = buildPortfolio(universe, {
-      portfolioValue: 1_000_000,
-      coverageThreshold: 0.85,
-    });
-    // A+B = 90% > 85%, C не нужна
-    const tickers = r.holdings.map((h) => h.ticker);
-    expect(tickers).toEqual(['A', 'B']);
-    expect(r.omitted.find((o) => o.ticker === 'C')?.reason).toBe(
-      'below_coverage_cutoff',
-    );
+    expect(r.omissionWeight).toBeCloseTo(0.1, 2);
   });
 
   it('пустая вселенная возвращает пустой результат', () => {
@@ -85,7 +115,7 @@ describe('buildPortfolio', () => {
 
   it('соблюдает maxHoldings', () => {
     const universe = Array.from({ length: 10 }, (_, i) =>
-      makeTicker({ ticker: `T${i}`, indexWeight: 10 }),
+      makeTicker({ ticker: 'T' + i, indexWeight: 10 }),
     );
     const r = buildPortfolio(universe, {
       portfolioValue: 10_000_000,

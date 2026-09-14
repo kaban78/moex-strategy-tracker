@@ -1,6 +1,6 @@
 // language: TypeScript, target: IMOEX index replication via optimized sampling
 // Репликация IMOEX cap-weight. Задача: минимизировать tracking error
-// при ограничении целых лотов. Обоснование см. README → "Репликация IMOEX".
+// при ограничении целых лотов.
 //
 // Это информационный инструмент. Не является инвестиционной рекомендацией.
 // См. src/lib/legal/disclaimers.ts.
@@ -10,8 +10,12 @@ import type { Ticker, TargetWeight } from '@/types';
 export interface BuildPortfolioOptions {
   /** Стоимость портфеля, руб. */
   portfolioValue: number;
-  /** Максимальная доля одного лота в портфеле, 0..1. По умолчанию 0.05. */
-  maxLotFraction?: number;
+  /**
+   * Относительный порог лотности. Бумага проходит, если её лот
+   * не превышает lotToTargetRatio × целевую стоимость позиции.
+   * По умолчанию 2.5 — лот может быть до 2.5× больше целевой.
+   */
+  lotToTargetRatio?: number;
   /** Порог покрытия индекса по весу, 0..1. По умолчанию 0.99. */
   coverageThreshold?: number;
   /** Жёсткий потолок числа бумаг. По умолчанию 30. */
@@ -30,18 +34,14 @@ export interface OmittedTicker {
 }
 
 export interface BuildPortfolioResult {
-  /** Бумаги, которые держим, с перенормированными весами. Сумма = 1. */
   holdings: TargetWeight[];
-  /** Бумаги, которые пропустили. */
   omitted: OmittedTicker[];
-  /** Суммарный вес пропущенных бумаг, 0..1. */
   omissionWeight: number;
-  /** Прогноз tracking error, годовых, 0..1. */
   estimatedTrackingError: number;
 }
 
 const DEFAULTS = {
-  maxLotFraction: 0.05,
+  lotToTargetRatio: 2.5,
   coverageThreshold: 0.99,
   maxHoldings: 30,
 } as const;
@@ -49,22 +49,21 @@ const DEFAULTS = {
 /**
  * Собирает портфель, повторяющий IMOEX, с учётом ограничения целых лотов.
  *
- * Алгоритм:
- *   1. Сортировка бумаг по весу в индексе (убывание).
- *   2. Lot-feasibility: отбрасываем бумаги, чей лот дороже maxLotFraction портфеля.
- *   3. Greedy: набираем бумаги сверху вниз до покрытия coverageThreshold
- *      или до maxHoldings.
- *   4. Перенормировка весов на удержанные бумаги.
- *   5. Omission weight и оценка tracking error.
+ * Фильтр лотности — относительный:
+ *   lotCost <= portfolioValue × (indexWeight / totalWeight) × lotToTargetRatio
+ *
+ * Это гарантирует, что крупные бумаги (LKOH 18%) не отсекаются,
+ * а мелкие с дорогими лотами (PHOR 0.62%, лот 5543 руб.) — отсеиваются.
  *
  * Корреляционный фильтр не применяется — для репликации индекса держим
- * всё, что в индексе. См. README → "Корреляции".
+ * всё, что в индексе.
  */
 export function buildPortfolio(
   universe: Ticker[],
   options: BuildPortfolioOptions,
 ): BuildPortfolioResult {
-  const maxLotFraction = options.maxLotFraction ?? DEFAULTS.maxLotFraction;
+  const lotToTargetRatio =
+    options.lotToTargetRatio ?? DEFAULTS.lotToTargetRatio;
   const coverageThreshold =
     options.coverageThreshold ?? DEFAULTS.coverageThreshold;
   const maxHoldings = options.maxHoldings ?? DEFAULTS.maxHoldings;
@@ -78,17 +77,17 @@ export function buildPortfolio(
     };
   }
 
-  // 1. Сортировка по весу в индексе — убывание.
   const sorted = [...universe].sort((a, b) => b.indexWeight - a.indexWeight);
-
   const totalWeight = sorted.reduce((s, t) => s + t.indexWeight, 0);
 
-  // 2. Lot-feasibility.
-  const maxLotCost = options.portfolioValue * maxLotFraction;
   const omitted: OmittedTicker[] = [];
 
+  // Lot-feasibility с относительным порогом.
   const feasible = sorted.filter((t) => {
-    if (t.lotSize * t.price > maxLotCost) {
+    const normalizedWeight = t.indexWeight / totalWeight;
+    const targetValue = options.portfolioValue * normalizedWeight;
+    const lotCost = t.lotSize * t.price;
+    if (lotCost > targetValue * lotToTargetRatio) {
       omitted.push({
         ticker: t.ticker,
         weight: t.indexWeight,
@@ -99,7 +98,6 @@ export function buildPortfolio(
     return true;
   });
 
-  // 3. Greedy: набираем сверху вниз до покрытия.
   const targetCoverage = totalWeight * coverageThreshold;
   const holdings: Ticker[] = [];
   let covered = 0;
@@ -125,7 +123,6 @@ export function buildPortfolio(
     covered += t.indexWeight;
   }
 
-  // 4. Перенормировка весов на удержанные бумаги.
   const heldWeight = holdings.reduce((s, t) => s + t.indexWeight, 0);
   const targetWeights: TargetWeight[] =
     heldWeight > 0
@@ -135,12 +132,12 @@ export function buildPortfolio(
         }))
       : [];
 
-  // 5. Omission weight и оценка TE.
   const omissionWeight =
     totalWeight > 0
       ? omitted.reduce((s, o) => s + o.weight, 0) / totalWeight
       : 0;
-  const estimatedTrackingError = estimateTrackingError(omissionWeight);
+
+  const estimatedTrackingError = estimateTrackingError(omitted, totalWeight);
 
   return {
     holdings: targetWeights,
@@ -151,37 +148,39 @@ export function buildPortfolio(
 }
 
 /**
- * Грубая оценка tracking error по omission weight.
+ * Оценка tracking error от пропущенных бумаг.
  *
- * Модель: TE ≈ sqrt(omission_weight² * idio_vol² + rounding²)
+ * TE ~ sigma_idio × sqrt(sum w_i^2)
  *
- * idio_vol = 0.30 — средняя идиосинкратическая волатильность на MOEX,
- * годовых. Остаток 0.5% — ошибка от лотного округления.
+ * где w_i — нормализованный вес пропущенной бумаги (0..1).
+ * Пропущенные веса распределены по N бумагам и частично гасят
+ * друг друга (диверсификация остатка).
  *
- * Это эвристика, не точная формула. Точная оценка — через бэктест.
+ * Линейная формула omission × sigma завышает TE в sqrt(N) раз.
+ *
+ * idio_vol = 0.30 — средняя идиосинкратическая волатильность на MOEX.
+ * roundingError = 0.005 — ошибка от лотного округления.
  */
-function estimateTrackingError(omissionWeight: number): number {
+function estimateTrackingError(
+  omitted: OmittedTicker[],
+  totalWeight: number,
+): number {
+  if (totalWeight <= 0 || omitted.length === 0) {
+    return 0.005;
+  }
   const idioVol = 0.3;
+  const sumSquares = omitted.reduce(
+    (s, o) => s + (o.weight / totalWeight) ** 2,
+    0,
+  );
+  const fromOmission = Math.sqrt(sumSquares) * idioVol;
   const roundingError = 0.005;
-  const fromOmission = omissionWeight * idioVol;
   return Math.sqrt(fromOmission ** 2 + roundingError ** 2);
 }
 
-/**
- * Динамический выбор целевого N.
- *
- * Для репликации индекса N — не «оптимальное число для диверсификации».
- * Это минимальное число бумаг, при котором покрывается 99% веса индекса
- * и которое физически покупаемо при данном капитале.
- *
- * Возвращает верхнюю границу. Реальное N определяется buildPortfolio
- * по лотам и покрытию.
- */
 export interface OptimalNOptions {
   portfolioValue: number;
-  /** Минимальный размер осмысленной позиции, руб. По умолчанию 5000. */
   minPositionValue?: number;
-  /** Жёсткий потолок. По умолчанию 30. */
   maxHoldings?: number;
 }
 
