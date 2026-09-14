@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MOEX Strategy Tracker
 
-## Getting Started
+> Информационный инструмент для отслеживания собственного портфеля
+> относительно индекса Московской биржи (IMOEX).
 
-First, run the development server:
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
+
+![Dashboard](public/screenshots/dashboard.png)
+
+---
+
+## Что это
+
+Локальное веб-приложение, которое:
+
+- подтягивает состав и веса индекса IMOEX с MOEX ISS (бесплатно, без ключа);
+- позволяет ввести собственный портфель вручную;
+- считает отклонение портфеля от выбранной стратегии;
+- показывает арифметику для устранения отклонения при пополнении.
+
+**Это калькулятор, не инвестиционный советник.** Приложение не даёт
+индивидуальных инвестиционных рекомендаций, не строит инвестиционный
+профиль и не исполняет сделки. См. раздел «Юридическая рамка».
+
+---
+
+## Почему
+
+Готовые БПИФ на IMOEX (SBMX, TMOS, EQMX) берут 0.5–1% TER. При горизонте
+10 лет и пополнениях 10 000 руб./мес это существенная сумма. Собственный
+трекер позволяет:
+
+- контролировать tracking error относительно индекса;
+- ребалансировать **только новыми пополнениями**, без продаж — значит
+  без комиссий и без НДФЛ на реализованную прибыль;
+- видеть точную арифметику покупок, а не рекомендации.
+
+---
+
+## Как работает репликация
+
+Задача — повторить IMOEX cap-weight при ограничении целых лотов. При
+капитале 100 000 руб. купить все 46 бумаг индекса в точных пропорциях
+невозможно: средняя позиция — 2 200 руб., а лот Лукойла — 5 508 руб.
+
+Алгоритм (optimized sampling):
+
+1. Сортировка бумаг по весу в индексе (убывание).
+2. **Относительный фильтр лотности:** бумага проходит, если её лот
+   не превышает `2.5 × целевую стоимость позиции`. Крупные бумаги
+   (LKOH 18%) проходят всегда, мелкие с дорогим лотом (PHOR 0.62%,
+   лот 5 543 руб.) — отсеиваются.
+3. Greedy: набираем бумаги сверху вниз до покрытия 99% веса индекса.
+4. Перенормировка весов на удержанные бумаги.
+5. Оценка tracking error: `sigma_idio × sqrt(sum w_i^2)`.
+
+Пропущенные бумаги — это **omission weight**. При 100 000 руб. он
+составляет 5–15%, при 2 млн — меньше 1%. С ростом капитала репликация
+приближается к настоящему ETF.
+
+Корреляционный фильтр **не применяется**: для репликации индекса держим
+всё, что в индексе.
+
+---
+
+## Стек
+
+- **Next.js 16** (App Router, RSC, Turbopack)
+- **TypeScript 5.9**
+- **Tailwind CSS 4** + **shadcn/ui** (Radix, Nova preset)
+- **Zustand** — состояние портфеля (localStorage)
+- **Recharts** — графики
+- **Vitest** — тесты
+- **pnpm** — пакетный менеджер
+
+---
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+git clone https://github.com/USER/moex-strategy-tracker.git
+cd moex-strategy-tracker
+pnpm install
 pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

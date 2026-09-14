@@ -1,9 +1,14 @@
 // language: TypeScript, target: rebalance via top-ups
 // Распределение свободного кэша по недобранным позициям.
 //
-// Ключевой принцип: пока есть кэш — только покупки, без продаж.
-// Это даёт ноль комиссий за продажу и ноль НДФЛ на реализованную прибыль.
-// Продажи — только когда кэша нет вообще.
+// Два прохода:
+//   1. Greedy: покупаем floor(needed) лотов по каждой недобранной позиции.
+//   2. Top-up: пока есть кэш и есть недобранные — покупаем 1 лот
+//      самой недобранной. Это сливает кэш в рынок.
+//
+// В конце — агрегация: одна строка на (ticker, side).
+//
+// Продажи — только если изначально кэша не было.
 //
 // Это информационный инструмент. Не является инвестиционной рекомендацией.
 // См. src/lib/legal/disclaimers.ts.
@@ -14,85 +19,117 @@ import type { Drift } from './drift';
 export interface RebalanceOptions {
   drifts: Drift[];
   universe: Ticker[];
-  /** Свободный кэш для распределения, руб. */
   cash: number;
-  /** Порог для продажи переобранных позиций, 0..1. По умолчанию 0.05. */
   sellThreshold?: number;
+  allowTopUp?: boolean;
 }
 
 export interface RebalanceAction {
   ticker: string;
   side: 'buy' | 'sell';
   lots: number;
-  /** Стоимость операции, руб. */
   cost: number;
 }
 
 export interface RebalanceResult {
-  /** Рекомендуемые операции: сначала покупки, потом продажи. */
   actions: RebalanceAction[];
-  /** Кэш, оставшийся нераспределённым, руб. */
   cashLeft: number;
-  /** Суммарная стоимость покупок, руб. */
   buyValue: number;
-  /** Суммарная стоимость продаж, руб. */
   sellValue: number;
 }
 
 const DEFAULT_SELL_THRESHOLD = 0.05;
 
-/**
- * Распределяет свободный кэш по недобранным позициям.
- *
- * Фаза 1 — покупки. Сортировка drifts по delta (возрастание):
- *   самые недобранные сверху. Greedy: покупаем столько лотов,
- *   сколько влезает в кэш и не превышает целевой вес.
- *
- * Фаза 2 — продажи. Только если исходный кэш был равен нулю.
- *   Пока есть кэш — ребалансируем только покупками (налоговая
- *   оптимизация). Продажи фиксируют прибыль → НДФЛ. Не делаем
- *   этого, пока можно обойтись пополнением.
- */
+interface WorkingState {
+  ticker: string;
+  lotCost: number;
+  currentValue: number;
+  targetValue: number;
+}
+
+interface RawAction {
+  ticker: string;
+  side: 'buy' | 'sell';
+  lots: number;
+  cost: number;
+}
+
 export function rebalance(options: RebalanceOptions): RebalanceResult {
   const sellThreshold = options.sellThreshold ?? DEFAULT_SELL_THRESHOLD;
+  const allowTopUp = options.allowTopUp ?? true;
   const tickerMap = new Map(options.universe.map((t) => [t.ticker, t]));
-  const actions: RebalanceAction[] = [];
-
+  const raw: RawAction[] = [];
   let remaining = options.cash;
 
-  // Фаза 1 — покупки.
-  const underweight = [...options.drifts]
-    .filter((d) => d.delta < 0)
-    .sort((a, b) => a.delta - b.delta);
-
-  for (const d of underweight) {
-    if (remaining <= 0) break;
+  const state: WorkingState[] = options.drifts.map((d) => {
     const t = tickerMap.get(d.ticker);
-    if (!t) continue;
+    return {
+      ticker: d.ticker,
+      lotCost: t ? t.lotSize * t.price : 0,
+      currentValue: d.currentValue,
+      targetValue: d.targetValue,
+    };
+  });
 
-    const lotCost = t.lotSize * t.price;
-    if (lotCost <= 0 || lotCost > remaining) continue;
+  // Проход 1: greedy.
+  const underweight = [...state]
+    .filter((s) => s.currentValue < s.targetValue && s.lotCost > 0)
+    .sort((a, b) => {
+      const gapA = a.targetValue - a.currentValue;
+      const gapB = b.targetValue - b.currentValue;
+      return gapB - gapA;
+    });
 
-    const neededValue = d.targetValue - d.currentValue;
-    if (neededValue <= 0) continue;
+  for (const s of underweight) {
+    if (remaining <= 0) break;
+    if (s.lotCost > remaining) continue;
 
-    const neededLots = Math.floor(neededValue / lotCost);
-    const affordableLots = Math.floor(remaining / lotCost);
+    const gap = s.targetValue - s.currentValue;
+    if (gap <= 0) continue;
+
+    const neededLots = Math.floor(gap / s.lotCost);
+    const affordableLots = Math.floor(remaining / s.lotCost);
     const lots = Math.min(neededLots, affordableLots);
     if (lots <= 0) continue;
 
-    const cost = lots * lotCost;
+    const cost = lots * s.lotCost;
     remaining -= cost;
+    s.currentValue += cost;
 
-    actions.push({
-      ticker: d.ticker,
-      side: 'buy',
-      lots,
-      cost,
-    });
+    raw.push({ ticker: s.ticker, side: 'buy', lots, cost });
   }
 
-  // Фаза 2 — продажи. Только если кэша не было изначально.
+  // Проход 2: top-up по одному лоту.
+  if (allowTopUp) {
+    while (remaining > 0) {
+      let best: WorkingState | null = null;
+      let bestScore = 0;
+
+      for (const s of state) {
+        if (s.lotCost <= 0 || s.lotCost > remaining) continue;
+        const gap = s.targetValue - s.currentValue;
+        if (gap <= 0) continue;
+        const score = gap / s.lotCost;
+        if (score > bestScore) {
+          bestScore = score;
+          best = s;
+        }
+      }
+
+      if (!best) break;
+
+      remaining -= best.lotCost;
+      best.currentValue += best.lotCost;
+      raw.push({
+        ticker: best.ticker,
+        side: 'buy',
+        lots: 1,
+        cost: best.lotCost,
+      });
+    }
+  }
+
+  // Продажи.
   if (options.cash === 0) {
     const overweight = options.drifts
       .filter((d) => d.delta > sellThreshold)
@@ -101,26 +138,31 @@ export function rebalance(options: RebalanceOptions): RebalanceResult {
     for (const d of overweight) {
       const t = tickerMap.get(d.ticker);
       if (!t) continue;
-
       const lotCost = t.lotSize * t.price;
       if (lotCost <= 0) continue;
-
       const excessValue = d.currentValue - d.targetValue;
       if (excessValue < lotCost) continue;
-
       const lots = Math.floor(excessValue / lotCost);
       if (lots <= 0) continue;
-
       const cost = lots * lotCost;
-
-      actions.push({
-        ticker: d.ticker,
-        side: 'sell',
-        lots,
-        cost,
-      });
+      raw.push({ ticker: d.ticker, side: 'sell', lots, cost });
     }
   }
+
+  // Агрегация: (ticker, side) → сумма.
+  const map = new Map<string, RebalanceAction>();
+  for (const a of raw) {
+    const key = a.ticker + '|' + a.side;
+    const prev = map.get(key);
+    if (prev) {
+      prev.lots += a.lots;
+      prev.cost += a.cost;
+    } else {
+      map.set(key, { ...a });
+    }
+  }
+
+  const actions = Array.from(map.values()).sort((a, b) => b.cost - a.cost);
 
   const buyValue = actions
     .filter((a) => a.side === 'buy')
