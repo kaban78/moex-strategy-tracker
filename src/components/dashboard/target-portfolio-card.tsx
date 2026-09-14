@@ -1,6 +1,6 @@
 'use client';
 
-import type { Ticker, TargetWeight } from '@/types';
+import type { TargetWeight } from '@/types';
 import type { AllocationResult } from '@/lib/engine/target-weights';
 import { TickerButton } from './ticker-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,7 +22,6 @@ interface Props {
   estimatedTrackingError: number;
   portfolioValue: number;
   allocation: AllocationResult;
-  universe: Ticker[];
   onTickerClick: (ticker: string) => void;
 }
 
@@ -69,10 +68,7 @@ export function TargetPortfolioCard({
               return (
                 <TableRow key={h.ticker}>
                   <TableCell>
-                    <TickerButton
-                      ticker={h.ticker}
-                      onClick={onTickerClick}
-                    />
+                    <TickerButton ticker={h.ticker} onClick={onTickerClick} />
                   </TableCell>
                   <TableCell className="text-right">
                     {formatPercent(h.weight * 100)}

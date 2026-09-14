@@ -31,9 +31,7 @@ export function Dashboard({ universe }: Props) {
 
   const lotCosts = useMemo(
     () =>
-      Object.fromEntries(
-        universe.map((t) => [t.ticker, t.lotSize * t.price]),
-      ),
+      Object.fromEntries(universe.map((t) => [t.ticker, t.lotSize * t.price])),
     [universe],
   );
 
@@ -83,7 +81,6 @@ export function Dashboard({ universe }: Props) {
         estimatedTrackingError={plan.estimatedTrackingError}
         portfolioValue={portfolioValue}
         allocation={allocation}
-        universe={universe}
         onTickerClick={handleTickerClick}
       />
 
