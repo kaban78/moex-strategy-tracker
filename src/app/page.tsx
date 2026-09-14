@@ -1,5 +1,5 @@
 import { fetchUniverse } from '@/lib/moex/client';
-import { Dashboard } from '@/components/dashboard';
+import { Dashboard } from '@/components/dashboard/dashboard';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { DISCLAIMER_SHORT_RU } from '@/lib/legal/disclaimers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
