@@ -49,12 +49,12 @@
 
 1. Сортировка бумаг по весу в индексе (убывание).
 2. **Относительный фильтр лотности:** бумага проходит, если её лот
-   не превышает `2.5 × целевую стоимость позиции`. Крупные бумаги
+   не превышает 2.5 × целевую стоимость позиции. Крупные бумаги
    (LKOH 18%) проходят всегда, мелкие с дорогим лотом (PHOR 0.62%,
    лот 5 543 руб.) — отсеиваются.
 3. Greedy: набираем бумаги сверху вниз до покрытия 99% веса индекса.
 4. Перенормировка весов на удержанные бумаги.
-5. Оценка tracking error: `sigma_idio × sqrt(sum w_i^2)`.
+5. Оценка tracking error: sigma_idio × sqrt(sum w_i²).
 
 Пропущенные бумаги — это **omission weight**. При 100 000 руб. он
 составляет 5–15%, при 2 млн — меньше 1%. С ростом капитала репликация
@@ -62,6 +62,10 @@
 
 Корреляционный фильтр **не применяется**: для репликации индекса держим
 всё, что в индексе.
+
+Ребалансировка — **два прохода**. Greedy закрывает крупные дефициты,
+top-up сливает остаток кэша по одному лоту в самые недобранные позиции.
+Cash drag после двух проходов — меньше 0.5% портфеля.
 
 ---
 
@@ -72,7 +76,7 @@
 - **Tailwind CSS 4** + **shadcn/ui** (Radix, Nova preset)
 - **Zustand** — состояние портфеля (localStorage)
 - **Recharts** — графики
-- **Vitest** — тесты
+- **Vitest** — тесты (40 зелёных)
 - **pnpm** — пакетный менеджер
 
 ---
@@ -84,3 +88,67 @@ git clone https://github.com/USER/moex-strategy-tracker.git
 cd moex-strategy-tracker
 pnpm install
 pnpm dev
+
+Юридическая рамка
+text
+
+## Юридическая рамка
+
+Приложение **не является** инвестиционным советником и **не предоставляет**
+индивидуальных инвестиционных рекомендаций (ИИР) в смысле
+ст. 6.1 Федерального закона от 22.04.1996 № 39-ФЗ «О рынке ценных бумаг».
+
+Принципы проектирования:
+
+1. **Нет инвестиционного профиля.** Приложение не спрашивает у
+   пользователя доходность, риск, горизонт.
+2. **Стратегия — шаблон.** Репликация IMOEX — фиксированный алгоритм.
+3. **Формулировки.** Вместо «рекомендую купить X» — «отклонение от
+   целевого веса составляет −3.2%, для устранения требуется 7 лотов».
+4. **Нет автоисполнения.** Приложение не имеет доступа к брокерскому
+   API на запись.
+5. **Дисклеймер на каждом экране.** См. src/lib/legal/disclaimers.ts.
+
+---
+
+## Источники
+
+- Statman, M. (1987). How Many Stocks Make a Diversified Portfolio?
+  Journal of Financial and Quantitative Analysis, 22(3), 353–363.
+- Domian, D., Louton, D., Racine, M. (2007). Diversification in Portfolios
+  of Individual Stocks: 100 Stocks Are Not Enough. The Financial Review,
+  42(4), 557–570.
+- Zaimovic, A., Omanovic, A., Arnaut-Berilo, A. (2021). How Many Stocks
+  Are Needed for Diversification: A Review of Literature. Journal of Risk
+  and Financial Management, 14(11).
+- DeMiguel, V., Garlappi, L., Uppal, R. (2009). Optimal Versus Naive
+  Diversification: How Inefficient Is the 1/N Portfolio Strategy?
+  Review of Financial Studies, 22(5), 1915–1953.
+- Huij, J., Blitz, D. (2012). Global style portfolios and the
+  diversification return. Emerging Markets Review.
+- MOEX ISS API. https://iss.moex.com/iss/reference/
+- Кодекс этики в сфере ИИ на финансовом рынке (Банк России, август 2026).
+
+---
+
+## Roadmap
+
+- [x] Юридический фундамент
+- [x] MOEX ISS client
+- [x] Репликация IMOEX (sampling + lot feasibility)
+- [x] Ребалансировка через пополнения
+- [x] Dashboard
+- [ ] Ссылки на MOEX по тикеру
+- [ ] График цены акции
+- [ ] Импорт CSV из брокера
+- [ ] Дивидендный календарь
+- [ ] Журнал сделок + график портфеля
+- [ ] Бэктест на истории
+- [ ] Сравнение с БПИФ (SBMX, TMOS, EQMX)
+- [ ] Калькулятор ИИС-3
+
+---
+
+## Лицензия
+
+MIT — см. LICENSE.
