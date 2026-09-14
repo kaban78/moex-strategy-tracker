@@ -8,7 +8,7 @@ import { rebalance } from '@/lib/engine/rebalance';
 import { allocateLots } from '@/lib/engine/target-weights';
 import { usePortfolio } from '@/stores/portfolio';
 import { PortfolioEditor } from '@/components/portfolio-editor';
-import { PriceChartDialog } from '@/components/price-chart-dialog';
+import { PriceChartDialog } from '@/components/price-chart/price-chart-dialog';
 import { prefetchHistory } from '@/lib/moex/history-cache';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
