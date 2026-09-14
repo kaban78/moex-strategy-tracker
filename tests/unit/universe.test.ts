@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPortfolio, optimalN } from '@/lib/universe/select';
+import { buildPortfolio } from '@/lib/universe/select';
 import type { Ticker } from '@/types';
 
 function makeTicker(overrides: Partial<Ticker>): Ticker {
@@ -9,10 +9,7 @@ function makeTicker(overrides: Partial<Ticker>): Ticker {
     lotSize: 10,
     price: 100,
     avgDailyVolume: 50_000_000,
-    freeFloat: 0.5,
-    mcap: 1_000_000_000,
     indexWeight: 1,
-    dividendYield: 0.05,
     ...overrides,
   };
 }
@@ -44,8 +41,6 @@ describe('buildPortfolio', () => {
   });
 
   it('пропускает мелкую бумагу с дорогим лотом', () => {
-    // PHOR: вес 0.62% от 100% индекса, target = 620 руб.
-    // лот 5543 руб. > 620 × 2.5 = 1550 руб. → отсекается.
     const universe = [
       makeTicker({ ticker: 'BIG', indexWeight: 99.38, lotSize: 1, price: 100 }),
       makeTicker({
@@ -123,19 +118,5 @@ describe('buildPortfolio', () => {
       coverageThreshold: 1.0,
     });
     expect(r.holdings.length).toBeLessThanOrEqual(3);
-  });
-});
-
-describe('optimalN', () => {
-  it('ограничен лотностью при малом портфеле', () => {
-    expect(optimalN({ portfolioValue: 50_000 })).toBe(10);
-  });
-
-  it('ограничен потолком при большом портфеле', () => {
-    expect(optimalN({ portfolioValue: 10_000_000 })).toBe(30);
-  });
-
-  it('не опускается ниже 5', () => {
-    expect(optimalN({ portfolioValue: 10_000 })).toBe(5);
   });
 });

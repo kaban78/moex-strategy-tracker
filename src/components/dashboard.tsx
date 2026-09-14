@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Ticker } from '@/types';
 import { buildPortfolio } from '@/lib/universe/select';
 import { computeDrift } from '@/lib/engine/drift';
@@ -8,6 +8,8 @@ import { rebalance } from '@/lib/engine/rebalance';
 import { allocateLots } from '@/lib/engine/target-weights';
 import { usePortfolio } from '@/stores/portfolio';
 import { PortfolioEditor } from '@/components/portfolio-editor';
+import { PriceChartDialog } from '@/components/price-chart-dialog';
+import { prefetchHistory } from '@/lib/moex/history-cache';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -25,8 +27,22 @@ interface Props {
   universe: Ticker[];
 }
 
+const PREFETCH_INTERVAL = 24;
+const PREFETCH_DAYS = 3650;
+
 export function Dashboard({ universe }: Props) {
   const { positions, cash } = usePortfolio();
+  const [chartTicker, setChartTicker] = useState<string | null>(null);
+  const [chartOpen, setChartOpen] = useState(false);
+
+  function openChart(ticker: string) {
+    setChartTicker(ticker);
+    setChartOpen(true);
+  }
+
+  function prefetch(ticker: string) {
+    void prefetchHistory(ticker, PREFETCH_INTERVAL, PREFETCH_DAYS);
+  }
 
   const lotCosts = useMemo(
     () =>
@@ -79,6 +95,18 @@ export function Dashboard({ universe }: Props) {
     [plan.holdings, universe, drift.totalValue],
   );
 
+  const TickerButton = ({ ticker }: { ticker: string }) => (
+    <button
+      type="button"
+      onClick={() => openChart(ticker)}
+      onMouseEnter={() => prefetch(ticker)}
+      onFocus={() => prefetch(ticker)}
+      className="font-mono font-medium underline decoration-dotted underline-offset-4 hover:text-blue-500 transition-colors"
+    >
+      {ticker}
+    </button>
+  );
+
   return (
     <div className="space-y-6">
       <PortfolioEditor lotCosts={lotCosts} />
@@ -113,8 +141,8 @@ export function Dashboard({ universe }: Props) {
                 );
                 return (
                   <TableRow key={h.ticker}>
-                    <TableCell className="font-mono font-medium">
-                      {h.ticker}
+                    <TableCell>
+                      <TickerButton ticker={h.ticker} />
                     </TableCell>
                     <TableCell className="text-right">
                       {formatPercent(h.weight * 100)}
@@ -167,7 +195,9 @@ export function Dashboard({ universe }: Props) {
               <TableBody>
                 {drift.drifts.map((d) => (
                   <TableRow key={d.ticker}>
-                    <TableCell className="font-mono">{d.ticker}</TableCell>
+                    <TableCell>
+                      <TickerButton ticker={d.ticker} />
+                    </TableCell>
                     <TableCell className="text-right">
                       {formatPercent(d.currentWeight * 100)}
                     </TableCell>
@@ -225,7 +255,9 @@ export function Dashboard({ universe }: Props) {
               <TableBody>
                 {rebalancePlan.actions.map((a, i) => (
                   <TableRow key={a.ticker + '-' + a.side + '-' + i}>
-                    <TableCell className="font-mono">{a.ticker}</TableCell>
+                    <TableCell>
+                      <TickerButton ticker={a.ticker} />
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={a.side === 'buy' ? 'secondary' : 'destructive'}
@@ -253,6 +285,12 @@ export function Dashboard({ universe }: Props) {
           </CardContent>
         </Card>
       )}
+
+      <PriceChartDialog
+        ticker={chartTicker}
+        open={chartOpen}
+        onOpenChange={setChartOpen}
+      />
     </div>
   );
 }

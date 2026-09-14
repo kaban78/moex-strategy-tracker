@@ -9,10 +9,7 @@ function makeTicker(overrides: Partial<Ticker>): Ticker {
     lotSize: 10,
     price: 100,
     avgDailyVolume: 50_000_000,
-    freeFloat: 0.5,
-    mcap: 1_000_000_000,
     indexWeight: 1,
-    dividendYield: 0.05,
     ...overrides,
   };
 }
@@ -25,16 +22,6 @@ describe('computeDrift', () => {
     const r = computeDrift({ positions, universe, targetWeights: target });
     expect(r.drifts[0].delta).toBeCloseTo(0, 5);
     expect(r.totalValue).toBe(10_000);
-  });
-
-  it('отрицательный delta при недоборе', () => {
-    const universe = [makeTicker({ ticker: 'A', lotSize: 10, price: 100 })];
-    const positions: Position[] = [{ ticker: 'A', lots: 5 }];
-    const target: TargetWeight[] = [{ ticker: 'A', weight: 1 }];
-    const r = computeDrift({ positions, universe, targetWeights: target });
-    // value = 5000, target = 1 * 5000 = 5000, но weight = 1.0
-    // На самом деле target = 1 от 5000 = 5000, current = 5000 → drift 0
-    expect(r.drifts[0].delta).toBeCloseTo(0, 5);
   });
 
   it('недобор по бумаге, которой нет в позициях', () => {
@@ -65,7 +52,6 @@ describe('computeDrift', () => {
       cash: 5_000,
     });
     expect(r.totalValue).toBe(10_000);
-    // current = 5000/10000 = 0.5, target = 0.5 → drift 0
     expect(r.drifts[0].delta).toBeCloseTo(0, 5);
   });
 

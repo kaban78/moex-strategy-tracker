@@ -9,10 +9,7 @@ function makeTicker(overrides: Partial<Ticker>): Ticker {
     lotSize: 10,
     price: 100,
     avgDailyVolume: 50_000_000,
-    freeFloat: 0.5,
-    mcap: 1_000_000_000,
     indexWeight: 1,
-    dividendYield: 0.05,
     ...overrides,
   };
 }
@@ -20,7 +17,6 @@ function makeTicker(overrides: Partial<Ticker>): Ticker {
 describe('allocateLots', () => {
   it('округляет вниз до целых лотов', () => {
     const universe = [makeTicker({ ticker: 'A', lotSize: 10, price: 100 })];
-    // lotCost = 1000, portfolio = 5000, weight = 1 → target = 5 лотов
     const r = allocateLots(
       [{ ticker: 'A', weight: 1 }],
       universe,
@@ -33,7 +29,6 @@ describe('allocateLots', () => {
 
   it('оставляет остаток в кэше при неполном лоте', () => {
     const universe = [makeTicker({ ticker: 'A', lotSize: 10, price: 100 })];
-    // lotCost = 1000, portfolio = 5500 → 5 лотов, остаток 500
     const r = allocateLots(
       [{ ticker: 'A', weight: 1 }],
       universe,
@@ -45,8 +40,6 @@ describe('allocateLots', () => {
 
   it('считает rounding drift', () => {
     const universe = [makeTicker({ ticker: 'A', lotSize: 10, price: 100 })];
-    // portfolio = 5500, weight = 1 → target 5.5 лотов, floor = 5
-    // actual weight = 5000/5500 ≈ 0.909
     const r = allocateLots(
       [{ ticker: 'A', weight: 1 }],
       universe,
@@ -65,13 +58,11 @@ describe('allocateLots', () => {
       { ticker: 'B', weight: 0.5 },
     ];
     const r = allocateLots(holdings, universe, { portfolioValue: 10_000 });
-    // A: target 5000 / 1000 = 5 лотов
-    // B: target 5000 / 2000 = 2.5 → 2 лота
     const a = r.allocations.find((x) => x.ticker === 'A')!;
     const b = r.allocations.find((x) => x.ticker === 'B')!;
     expect(a.lots).toBe(5);
     expect(b.lots).toBe(2);
-    expect(r.cashLeft).toBe(1000);
+    expect(r.cashLeft).toBe(1_000);
   });
 
   it('учитывает cash в общем капитале', () => {

@@ -10,10 +10,7 @@ function makeTicker(overrides: Partial<Ticker>): Ticker {
     lotSize: 10,
     price: 100,
     avgDailyVolume: 50_000_000,
-    freeFloat: 0.5,
-    mcap: 1_000_000_000,
     indexWeight: 1,
-    dividendYield: 0.05,
     ...overrides,
   };
 }
@@ -68,18 +65,11 @@ describe('rebalance', () => {
       makeDrift('B', 1_500, 5_000),
     ];
     const r = rebalance({ drifts, universe, cash: 5_000 });
-    // A: 3 лота, B: 2 лота (greedy распределяет 5000)
     expect(r.buyValue).toBe(5_000);
     expect(r.cashLeft).toBe(0);
   });
 
   it('top-up уменьшает cash drag когда greedy оставил остаток', () => {
-    // A: лот 1000, gap 100 (недобор меньше лота)
-    // B: лот 2000, gap 3000
-    // cash 5000
-    // greedy: B → 1 лот (2000), остаток 3000.
-    //   A: floor(100/1000)=0, пропускается.
-    // top-up: покупает B (gap 1000, score 0.5), потом A (gap 100, score 0.1).
     const universe = [
       makeTicker({ ticker: 'A', lotSize: 1, price: 1000 }),
       makeTicker({ ticker: 'B', lotSize: 2, price: 1000 }),
@@ -133,8 +123,6 @@ describe('rebalance', () => {
       makeDrift('A', 0, 10_000),
       makeDrift('B', 0, 10_000),
     ];
-    // A lotCost = 5000, B lotCost = 1000. cash 6000.
-    // greedy: A → 1 лот (5000), B → 1 лот (1000). Остаток 0.
     const r = rebalance({ drifts, universe, cash: 6_000 });
     expect(r.cashLeft).toBeLessThan(1_000);
   });

@@ -177,16 +177,3 @@ function estimateTrackingError(
   const roundingError = 0.005;
   return Math.sqrt(fromOmission ** 2 + roundingError ** 2);
 }
-
-export interface OptimalNOptions {
-  portfolioValue: number;
-  minPositionValue?: number;
-  maxHoldings?: number;
-}
-
-export function optimalN(options: OptimalNOptions): number {
-  const minPositionValue = options.minPositionValue ?? 5_000;
-  const maxHoldings = options.maxHoldings ?? 30;
-  const byLot = Math.floor(options.portfolioValue / minPositionValue);
-  return Math.max(5, Math.min(byLot, maxHoldings));
-}

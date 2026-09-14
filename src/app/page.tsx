@@ -1,5 +1,6 @@
 import { fetchUniverse } from '@/lib/moex/client';
 import { Dashboard } from '@/components/dashboard';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { DISCLAIMER_SHORT_RU } from '@/lib/legal/disclaimers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -17,11 +18,16 @@ export default async function Home() {
 
   return (
     <main className="container mx-auto py-10 space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">
-          MOEX Strategy Tracker
-        </h1>
-        <p className="text-sm text-muted-foreground">{DISCLAIMER_SHORT_RU}</p>
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">
+            MOEX Strategy Tracker
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {DISCLAIMER_SHORT_RU}
+          </p>
+        </div>
+        <ThemeToggle />
       </header>
 
       {error && (

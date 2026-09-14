@@ -1,19 +1,12 @@
 // language: TypeScript, target: MOEX ISS response parsing
-// MOEX ISS возвращает таблицы в формате {columns, data}.
-// Здесь — чистые функции парсинга. Без сети, тестируемы.
 
 import type { Ticker } from '@/types';
 
-/** Одна таблица ISS. data намеренно unknown[][] — ISS не гарантирует типы. */
 export interface IssTable {
   columns: string[];
   data: unknown[][];
 }
 
-/**
- * Превращает таблицу ISS в массив объектов.
- * Ключи — из columns, значения — из data построчно.
- */
 export function parseIssTable<T = Record<string, unknown>>(
   table: IssTable | undefined | null,
 ): T[] {
@@ -27,43 +20,40 @@ export function parseIssTable<T = Record<string, unknown>>(
   });
 }
 
-/**
- * Строка из analytics IMOEX.
- * Реальные колонки ISS (проверено 2026-09-14):
- *   indexid, tradedate, ticker, shortnames, secids, weight,
- *   tradingsession, trade_session_date
- */
 export interface IssIndexRow {
   indexid: string;
   tradedate: string;
   ticker: string;
   shortnames: string;
   secids: string;
-  /** Вес в индексе, %. */
   weight: number;
   tradingsession: number;
   trade_session_date: string;
 }
 
-/** Строка из securities TQBR. */
 export interface IssSecurityRow {
   SECID: string;
   SHORTNAME: string;
   LOTSIZE: number;
   PREVPRICE: number;
-  FACEVALUE?: number;
 }
 
-/** Строка из marketdata TQBR. */
 export interface IssMarketDataRow {
   SECID: string;
   LAST: number;
   VALTODAY: number;
 }
 
-/**
- * Фильтрует строки analytics по последней дате.
- */
+export interface IssCandleRow {
+  begin: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  value: number;
+}
+
 export function latestTradeDate(rows: IssIndexRow[]): string | null {
   if (rows.length === 0) return null;
   return rows.reduce(
@@ -79,15 +69,6 @@ export function filterByDate(
   return rows.filter((r) => r.tradedate === date);
 }
 
-/**
- * Мержит analytics (weight, shortnames) с securities (lotSize, prevprice)
- * и marketdata (LAST, VALTODAY) в Ticker[].
- *
- * Цена: LAST если > 0, иначе PREVPRICE.
- * Имя: из shortnames в analytics — уже там, отдельно тянуть не нужно.
- * mcap/freeFloat/dividendYield — не приходят из ISS analytics.
- *   Движок их не использует (см. buildPortfolio), ставим 0.
- */
 export function mergeTickers(
   weights: IssIndexRow[],
   securities: IssSecurityRow[],
@@ -105,20 +86,75 @@ export function mergeTickers(
     const price = md?.LAST && md.LAST > 0 ? md.LAST : sec.PREVPRICE;
     if (!price || price <= 0) continue;
 
-    const lotSize = sec.LOTSIZE || 1;
-    const avgDailyVolume = md?.VALTODAY ?? 0;
-
     result.push({
       ticker: w.ticker,
       name: w.shortnames || sec.SHORTNAME,
-      lotSize,
+      lotSize: sec.LOTSIZE || 1,
       price,
-      avgDailyVolume,
-      freeFloat: 0,
-      mcap: 0,
+      avgDailyVolume: md?.VALTODAY ?? 0,
       indexWeight: w.weight,
-      dividendYield: 0,
     });
   }
   return result;
+}
+
+/**
+ * Свеча для lightweight-charts.
+ * time: string "YYYY-MM-DD" для дневных+, или Unix timestamp (сек) для внутридневных.
+ */
+export interface Candle {
+  time: number | string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * MOEX ISS интервалы: 1, 10 (мин), 60 (час), 24 (день), 7 (неделя), 31 (месяц).
+ * intraday = interval < 24 → время с часовым поясом.
+ *
+ * begin в ответе — MSK (UTC+3). Parsed как будто это UTC (Z),
+ * чтобы lightweight-charts показывал время в MSK.
+ */
+export function parseCandles(rows: IssCandleRow[], interval: number): Candle[] {
+  const intraday = interval < 24;
+  const out: Candle[] = [];
+  const seen = new Set<number | string>();
+
+  for (const r of rows) {
+    if (
+      typeof r.open !== 'number' || r.open <= 0 ||
+      typeof r.high !== 'number' || r.high <= 0 ||
+      typeof r.low !== 'number' || r.low <= 0 ||
+      typeof r.close !== 'number' || r.close <= 0 ||
+      typeof r.begin !== 'string' || r.begin.length === 0
+    ) {
+      continue;
+    }
+
+    let time: number | string;
+    if (intraday) {
+      const ts = Math.floor(
+        new Date(r.begin.replace(' ', 'T') + 'Z').getTime() / 1000,
+      );
+      if (!Number.isFinite(ts)) continue;
+      time = ts;
+    } else {
+      time = r.begin.slice(0, 10);
+    }
+
+    if (seen.has(time)) continue;
+    seen.add(time);
+
+    out.push({
+      time,
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      close: r.close,
+    });
+  }
+
+  return out;
 }
