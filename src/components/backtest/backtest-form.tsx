@@ -11,15 +11,24 @@ interface Props {
   onResult: (result: unknown, params: BacktestParams) => void;
 }
 
+const TODAY_ISO = new Date().toISOString().slice(0, 10);
+
 const PRESETS = [
-  { label: 'с 2020', start: '2020-06-01', end: '2026-09-01' },
-  { label: 'с 2022', start: '2022-01-01', end: '2026-09-01' },
-  { label: 'последний год', start: '2025-09-01', end: '2026-09-01' },
+  { label: 'с 2020', start: '2020-01-01', end: TODAY_ISO },
+  { label: 'с 2022', start: '2022-01-01', end: TODAY_ISO },
+  { label: 'с 2024', start: '2024-01-01', end: TODAY_ISO },
+  { label: 'последний год', start: shiftYears(TODAY_ISO, -1), end: TODAY_ISO },
 ] as const;
 
+function shiftYears(iso: string, years: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCFullYear(d.getUTCFullYear() + years);
+  return d.toISOString().slice(0, 10);
+}
+
 export function BacktestForm({ onResult }: Props) {
-  const [startDate, setStartDate] = useState('2020-06-01');
-  const [endDate, setEndDate] = useState('2026-09-01');
+  const [startDate, setStartDate] = useState('2020-01-01');
+  const [endDate, setEndDate] = useState(TODAY_ISO);
   const [initialCapital, setInitialCapital] = useState('100000');
   const [monthlyTopUp, setMonthlyTopUp] = useState('10000');
   const [commissionRate, setCommissionRate] = useState('0.05');

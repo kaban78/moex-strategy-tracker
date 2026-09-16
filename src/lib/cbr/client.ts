@@ -1,9 +1,13 @@
 // language: TypeScript, target: CBR RF SOAP client
+//
 // Ключевая ставка ЦБ РФ и средняя ставка по вкладам топ-10 банков.
 // Источник: cbr.ru, SOAP-сервисы DailyInfo и SecInfo.
 //
-// CBR возвращает XML внутри XML: сначала SOAP-конверт, внутри него
-// экранированный XML-документ. Парсим в два прохода.
+// Формат ответа (проверено 2026-09):
+//   <KeyRateXMLResult>
+//     <KeyRate><KR><DT>...</DT><Rate>21.00</Rate></KR>...</KeyRate>
+//   </KeyRateXMLResult>
+// Внутри KR — вложенные теги, не атрибуты.
 
 import { XMLParser } from 'fast-xml-parser';
 
@@ -28,28 +32,13 @@ interface CacheEntry<T> {
 const keyRateCache = new Map<string, CacheEntry<RatePoint[]>>();
 const depositRateCache = new Map<string, CacheEntry<RatePoint[]>>();
 
-const outerParser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: '@_',
-  trimValues: true,
-  parseTagValue: false,
-});
-
-const innerParser = new XMLParser({
+const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   isArray: (name) => name === 'KR' || name === 'Avgprocstav',
   trimValues: true,
+  parseTagValue: false,
 });
-
-function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
-}
 
 async function soapRequest(
   url: string,
@@ -84,32 +73,35 @@ function isoToCbrDate(iso: string): string {
   return `${iso}T00:00:00`;
 }
 
-/**
- * Извлекает внутренний XML-документ из SOAP-ответа.
- * Результат может прийти как строка (двойная кодировка)
- * или как распарсенный объект — обрабатываем оба случая.
- */
-function extractInnerXml(result: unknown): Record<string, unknown> | null {
-  if (result == null) return null;
-  if (typeof result !== 'string') {
-    return result as Record<string, unknown>;
-  }
+interface KrRow {
+  DT?: string | { '#text'?: string };
+  Rate?: string | number | { '#text'?: string | number };
+}
 
-  // Уже декодировано парсером или пришло как-есть.
-  let s = result;
-  if (s.includes('&lt;')) {
-    s = decodeXmlEntities(s);
+function pickText(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'object' && '#text' in v) {
+    const t = (v as { '#text'?: unknown })['#text'];
+    return typeof t === 'string' || typeof t === 'number' ? String(t) : '';
   }
-  // Если это обёртка вида {"#text": "..."} — вытащить текст.
-  const textMatch = s.match(/<KeyRate[^>]*>|<Avgprocstav[^>]*>/);
-  if (textMatch && textMatch.index && textMatch.index > 0) {
-    s = s.slice(textMatch.index);
+  return '';
+}
+
+function krRowsToPoints(rows: unknown): RatePoint[] {
+  if (!Array.isArray(rows)) return [];
+  const points: RatePoint[] = [];
+  for (const raw of rows) {
+    const r = raw as KrRow;
+    const dateStr = pickText(r.DT).slice(0, 10);
+    const rate = Number(pickText(r.Rate));
+    if (dateStr && Number.isFinite(rate)) {
+      points.push({ date: dateStr, value: rate });
+    }
   }
-  try {
-    return innerParser.parse(s) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  points.sort((a, b) => a.date.localeCompare(b.date));
+  return points;
 }
 
 export async function fetchKeyRate(
@@ -118,9 +110,7 @@ export async function fetchKeyRate(
 ): Promise<RatePoint[]> {
   const key = `${from}|${till}`;
   const cached = keyRateCache.get(key);
-  if (cached && Date.now() - cached.at < CACHE_TTL) {
-    return cached.data;
-  }
+  if (cached && Date.now() - cached.at < CACHE_TTL) return cached.data;
 
   const body = `<KeyRateXML xmlns="http://web.cbr.ru/">
     <fromDate>${isoToCbrDate(from)}</fromDate>
@@ -133,29 +123,16 @@ export async function fetchKeyRate(
     body,
   );
 
-  const parsed = outerParser.parse(xml);
+  const parsed = parser.parse(xml);
   const result =
     parsed?.['soap:Envelope']?.['soap:Body']?.['KeyRateXMLResponse']?.[
       'KeyRateXMLResult'
     ];
 
-  const inner = extractInnerXml(result);
-  const points: RatePoint[] = [];
-  const keyRateObj = inner?.KeyRate as { KR?: unknown[] } | undefined;
-  const rows = keyRateObj?.KR;
+  // result.KeyRate.KR[] — массив записей.
+  const keyRateObj = result?.KeyRate as { KR?: unknown } | undefined;
+  const points = krRowsToPoints(keyRateObj?.KR);
 
-  if (Array.isArray(rows)) {
-    for (const raw of rows) {
-      const r = raw as Record<string, unknown>;
-      const date = String(r['@_DT'] ?? '').slice(0, 10);
-      const rate = Number(r['@_Rate']);
-      if (date && Number.isFinite(rate)) {
-        points.push({ date, value: rate });
-      }
-    }
-  }
-
-  points.sort((a, b) => a.date.localeCompare(b.date));
   keyRateCache.set(key, { at: Date.now(), data: points });
   return points;
 }
@@ -166,9 +143,7 @@ export async function fetchDepositRate(
 ): Promise<RatePoint[]> {
   const key = `${from}|${till}`;
   const cached = depositRateCache.get(key);
-  if (cached && Date.now() - cached.at < CACHE_TTL) {
-    return cached.data;
-  }
+  if (cached && Date.now() - cached.at < CACHE_TTL) return cached.data;
 
   const body = `<Avgprocstav xmlns="http://web.cbr.ru/">
     <DateFrom>${isoToCbrDate(from)}</DateFrom>
@@ -181,28 +156,15 @@ export async function fetchDepositRate(
     body,
   );
 
-  const parsed = outerParser.parse(xml);
+  const parsed = parser.parse(xml);
   const result =
     parsed?.['soap:Envelope']?.['soap:Body']?.['AvgprocstavResponse']?.[
       'AvgprocstavResult'
     ];
 
-  const inner = extractInnerXml(result);
-  const points: RatePoint[] = [];
-  const rows = inner?.Avgprocstav as unknown[] | undefined;
+  // result — объект с массивом Avgprocstav.
+  const points = krRowsToPoints(result?.Avgprocstav);
 
-  if (Array.isArray(rows)) {
-    for (const raw of rows) {
-      const r = raw as Record<string, unknown>;
-      const date = String(r['@_DT'] ?? '').slice(0, 10);
-      const rate = Number(r['@_Rate']);
-      if (date && Number.isFinite(rate)) {
-        points.push({ date, value: rate });
-      }
-    }
-  }
-
-  points.sort((a, b) => a.date.localeCompare(b.date));
   depositRateCache.set(key, { at: Date.now(), data: points });
   return points;
 }

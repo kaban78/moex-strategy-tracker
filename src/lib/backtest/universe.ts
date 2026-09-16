@@ -1,8 +1,5 @@
 // language: TypeScript, target: historical IMOEX universe
-// Загрузка состава IMOEX на конкретную дату.
-//
-// MOEX ISS отдаёт состав через analytics с параметром date=YYYY-MM-DD.
-// Работает только для торговых дней. Для выходных используем nearestTradingDay.
+// Загрузка состава IMOEX на дату с картой переименований тикеров.
 
 import type { Ticker } from '@/types';
 import {
@@ -17,6 +14,18 @@ import {
 const ISS_BASE = 'https://iss.moex.com/iss';
 const USER_AGENT =
   'moex-strategy-tracker/0.1 (personal use, informational tool)';
+
+/**
+ * Переименования тикеров: старый → новый.
+ * Нужно потому, что композиция IMOEX на 2020 использует старые SECID,
+ * а securities ISS отдаёт по новым. Цены при этом грузятся по СТАРОМУ
+ * тикеру — MOEX хранит историю под ним.
+ */
+const RENAMED: Record<string, string> = {
+  TCSG: 'T',
+  YNDX: 'YDEX',
+  FIVE: 'X5',
+};
 
 interface IssJson {
   [key: string]: IssTable | undefined;
@@ -43,27 +52,18 @@ async function fetchIss(
   return (await res.json()) as IssJson;
 }
 
-/**
- * Состав IMOEX на конкретную дату (торговый день).
- * Возвращает только тикеры + веса. Цены и лоты тянем отдельно.
- */
 export async function fetchCompositionOn(
   date: string,
 ): Promise<IssIndexRow[]> {
   const json = await fetchIss(
     '/statistics/engines/stock/markets/index/analytics/IMOEX.json',
     { date, limit: '200' },
-    86400, // состав на дату не меняется, кэш сутки
+    86400,
   );
   const rows = parseIssTable<IssIndexRow>(json.analytics);
   return rows.filter((r) => r.tradedate === date);
 }
 
-/**
- * Для набора тикеров тянет текущие лоты и последние цены.
- * Используется ТОЛЬКО для получения lotSize — цены в бэктесте
- * берём из historical candles.
- */
 export async function fetchCurrentTradingData(
   tickers: string[],
 ): Promise<{
@@ -86,13 +86,67 @@ export async function fetchCurrentTradingData(
 
 /**
  * Полный Ticker[] для состава индекса на дату.
- * lotSize и price из текущих данных ISS — для бэктеста нам нужны только
- * lotSize и тикер; цена перезапишется исторической свечой.
+ *
+ * Старые тикеры ищутся в TQBR через карту RENAMED, но lotSize и тикер
+ * итоговый — СТАРЫЙ (TCSG), потому что цены в бэктесте будут грузиться
+ * по нему. Так сохраняем корректность истории.
  */
 export async function fetchUniverseOn(date: string): Promise<Ticker[]> {
   const weights = await fetchCompositionOn(date);
   if (weights.length === 0) return [];
-  const tickers = weights.map((w) => w.ticker);
-  const { securities, marketData } = await fetchCurrentTradingData(tickers);
-  return mergeTickers(weights, securities, marketData);
+
+  const originalTickers = weights.map((w) => w.ticker);
+
+  // Для поиска в TQBR используем современные тикеры, но потом
+  // привязываем их к оригинальным (историческим) в композиции.
+  const lookupTickers = new Set<string>();
+  for (const t of originalTickers) {
+    lookupTickers.add(RENAMED[t] ?? t);
+  }
+
+  const { securities, marketData } = await fetchCurrentTradingData(
+    Array.from(lookupTickers),
+  );
+
+  // Переиндексируем securities и marketData обратно на оригинальные тикеры.
+  const securitiesByOriginal = new Map<string, IssSecurityRow>();
+  const marketDataByOriginal = new Map<string, IssMarketDataRow>();
+
+  for (const orig of originalTickers) {
+    const modern = RENAMED[orig] ?? orig;
+    const sec = securities.find((s) => s.SECID === modern);
+    if (sec) {
+      // Копируем с оригинальным SECID — чтобы mergeTickers нашёл.
+      securitiesByOriginal.set(orig, { ...sec, SECID: orig });
+    }
+    const md = marketData.find((m) => m.SECID === modern);
+    if (md) {
+      marketDataByOriginal.set(orig, { ...md, SECID: orig });
+    }
+  }
+
+  const result = mergeTickers(
+    weights,
+    Array.from(securitiesByOriginal.values()),
+    Array.from(marketDataByOriginal.values()),
+  );
+
+  // Диагностика: сколько бумаг потеряно
+  if (result.length < originalTickers.length) {
+    const lost = originalTickers.filter(
+      (t) => !result.some((r) => r.ticker === t),
+    );
+    console.log(
+      '[universe]',
+      date,
+      'composition:',
+      originalTickers.length,
+      'merged:',
+      result.length,
+      'lost:',
+      lost.join(','),
+    );
+  }
+
+  return result;
 }

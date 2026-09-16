@@ -14,30 +14,34 @@ export interface MonthSnapshot {
   cash: number;
   totalValue: number;
   invested: number;
-  /** IMOEX без дивидендов. */
   benchmarkValue: number;
-  /** MCFTR с дивидендами. */
   benchmarkTotalReturnValue: number;
+  imoexPrice: number;
+  mcftrPrice: number;
+  depositValue: number;
   positionsCount: number;
   omissionWeight: number;
 }
 
-export interface BacktestMetrics {
+export interface SeriesMetrics {
   finalValue: number;
   totalInvested: number;
-  totalReturn: number;
-  cagr: number;
+  /** finalValue − totalInvested, ₽. */
+  absoluteReturn: number;
+  /** XIRR (годовых, доля). NaN если не считается. */
+  xirr: number;
+  /** Max drawdown на NAV, 0..1. */
   maxDrawdown: number;
+}
+
+export interface BacktestMetrics {
+  imoexPriceCagr: number;
+  mcftrPriceCagr: number;
+  portfolio: SeriesMetrics;
+  imoexDca: SeriesMetrics;
+  mcftrDca: SeriesMetrics;
+  deposit: SeriesMetrics;
   trackingError: number;
-  benchmarkFinalValue: number;
-  benchmarkCagr: number;
-  benchmarkMaxDrawdown: number;
-  /** MCFTR финальная стоимость. */
-  benchmarkTotalReturnFinalValue: number;
-  /** CAGR MCFTR. */
-  benchmarkTotalReturnCagr: number;
-  /** Max drawdown MCFTR. */
-  benchmarkTotalReturnMaxDrawdown: number;
 }
 
 export interface BacktestResult {
