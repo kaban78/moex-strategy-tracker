@@ -11,8 +11,7 @@ export function moneyToNumber(m: MoneyValue | undefined): number {
   if (!m) return 0;
   const units = parseInt(m.units || '0', 10);
   const nano = m.nano || 0;
-  const sign = units < 0 ? -1 : 1;
-  return units + sign * (nano / 1_000_000_000);
+  return units + nano / 1_000_000_000;
 }
 
 /**
