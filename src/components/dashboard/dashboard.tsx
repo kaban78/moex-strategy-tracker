@@ -96,15 +96,15 @@ export function Dashboard({ universe }: Props) {
         />
       )}
 
+      <RebalanceCard
+        rebalancePlan={rebalancePlan}
+        onTickerClick={handleTickerClick}
+      />
+
       <DividendsCard
         positions={positions}
         universe={universe}
         portfolioValue={portfolioValue}
-      />
-
-      <RebalanceCard
-        rebalancePlan={rebalancePlan}
-        onTickerClick={handleTickerClick}
       />
 
       <PriceChartDialog
