@@ -2,7 +2,8 @@
 // Ключевая ставка ЦБ РФ и средняя ставка по вкладам топ-10 банков.
 // Источник: cbr.ru, SOAP-сервисы DailyInfo и SecInfo.
 //
-// Кэш в памяти процесса: 6 часов.
+// CBR возвращает XML внутри XML: сначала SOAP-конверт, внутри него
+// экранированный XML-документ. Парсим в два прохода.
 
 import { XMLParser } from 'fast-xml-parser';
 
@@ -27,11 +28,28 @@ interface CacheEntry<T> {
 const keyRateCache = new Map<string, CacheEntry<RatePoint[]>>();
 const depositRateCache = new Map<string, CacheEntry<RatePoint[]>>();
 
-const parser = new XMLParser({
+const outerParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  trimValues: true,
+  parseTagValue: false,
+});
+
+const innerParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   isArray: (name) => name === 'KR' || name === 'Avgprocstav',
+  trimValues: true,
 });
+
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
 
 async function soapRequest(
   url: string,
@@ -63,14 +81,37 @@ async function soapRequest(
 }
 
 function isoToCbrDate(iso: string): string {
-  // YYYY-MM-DD → YYYY-MM-DDT00:00:00
   return `${iso}T00:00:00`;
 }
 
 /**
- * Ключевая ставка ЦБ РФ за диапазон.
- * Отдаёт одну точку на каждое изменение ставки.
+ * Извлекает внутренний XML-документ из SOAP-ответа.
+ * Результат может прийти как строка (двойная кодировка)
+ * или как распарсенный объект — обрабатываем оба случая.
  */
+function extractInnerXml(result: unknown): Record<string, unknown> | null {
+  if (result == null) return null;
+  if (typeof result !== 'string') {
+    return result as Record<string, unknown>;
+  }
+
+  // Уже декодировано парсером или пришло как-есть.
+  let s = result;
+  if (s.includes('&lt;')) {
+    s = decodeXmlEntities(s);
+  }
+  // Если это обёртка вида {"#text": "..."} — вытащить текст.
+  const textMatch = s.match(/<KeyRate[^>]*>|<Avgprocstav[^>]*>/);
+  if (textMatch && textMatch.index && textMatch.index > 0) {
+    s = s.slice(textMatch.index);
+  }
+  try {
+    return innerParser.parse(s) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchKeyRate(
   from: string,
   till: string,
@@ -92,16 +133,20 @@ export async function fetchKeyRate(
     body,
   );
 
-  const parsed = parser.parse(xml);
+  const parsed = outerParser.parse(xml);
   const result =
     parsed?.['soap:Envelope']?.['soap:Body']?.['KeyRateXMLResponse']?.[
       'KeyRateXMLResult'
     ];
 
+  const inner = extractInnerXml(result);
   const points: RatePoint[] = [];
-  const rows = result?.KeyRate?.KR;
+  const keyRateObj = inner?.KeyRate as { KR?: unknown[] } | undefined;
+  const rows = keyRateObj?.KR;
+
   if (Array.isArray(rows)) {
-    for (const r of rows) {
+    for (const raw of rows) {
+      const r = raw as Record<string, unknown>;
       const date = String(r['@_DT'] ?? '').slice(0, 10);
       const rate = Number(r['@_Rate']);
       if (date && Number.isFinite(rate)) {
@@ -115,10 +160,6 @@ export async function fetchKeyRate(
   return points;
 }
 
-/**
- * Средняя максимальная ставка по вкладам в рублях
- * в топ-10 банках РФ, % годовых.
- */
 export async function fetchDepositRate(
   from: string,
   till: string,
@@ -140,16 +181,19 @@ export async function fetchDepositRate(
     body,
   );
 
-  const parsed = parser.parse(xml);
+  const parsed = outerParser.parse(xml);
   const result =
     parsed?.['soap:Envelope']?.['soap:Body']?.['AvgprocstavResponse']?.[
       'AvgprocstavResult'
     ];
 
+  const inner = extractInnerXml(result);
   const points: RatePoint[] = [];
-  const rows = result?.Avgprocstav;
+  const rows = inner?.Avgprocstav as unknown[] | undefined;
+
   if (Array.isArray(rows)) {
-    for (const r of rows) {
+    for (const raw of rows) {
+      const r = raw as Record<string, unknown>;
       const date = String(r['@_DT'] ?? '').slice(0, 10);
       const rate = Number(r['@_Rate']);
       if (date && Number.isFinite(rate)) {
@@ -163,9 +207,6 @@ export async function fetchDepositRate(
   return points;
 }
 
-/**
- * Ставка на дату — ближайшее предыдущее значение.
- */
 export function rateOn(points: RatePoint[], date: string): number | null {
   if (points.length === 0) return null;
   if (date < points[0].date) return null;

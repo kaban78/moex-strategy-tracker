@@ -1,4 +1,9 @@
 // language: TypeScript, target: backtest simulation loop
+//
+// Симуляция портфеля, повторяющего IMOEX, с ежемесячной ребалансировкой.
+// Дивиденды начисляются как прирост MCFTR над IMOEX за месяц:
+// это даёт прокси дивидендной доходности индекса без необходимости
+// тянуть дивиденды каждой бумаги.
 
 import type { Position, Ticker } from '@/types';
 import { buildPortfolio } from '@/lib/universe/select';
@@ -42,7 +47,6 @@ function holdingsToPositions(holdings: Holding[]): Position[] {
 
 /**
  * Цена на дату из плоского ряда { date → price }.
- * Ближайшее предыдущее значение.
  */
 function priceOnSeries(
   series: Map<string, number>,
@@ -92,19 +96,24 @@ export async function runBacktest(
     params.endDate,
   );
 
-  // Два бенчмарка: IMOEX (ценовой) и MCFTR (полной доходности).
-  const imoexPrices = await fetchIndexPrices('IMOEX', params.startDate, params.endDate);
-  const mcftrPrices = await fetchIndexPrices('MCFTR', params.startDate, params.endDate);
+  const imoexPrices = await fetchIndexPrices(
+    'IMOEX',
+    params.startDate,
+    params.endDate,
+  );
+  const mcftrPrices = await fetchIndexPrices(
+    'MCFTR',
+    params.startDate,
+    params.endDate,
+  );
 
   let holdings: Holding[] = [];
   let cash = params.initialCapital;
   let invested = params.initialCapital;
 
-  // Бенчмарк 1 — IMOEX (без дивидендов).
   let imoexLots = 0;
   let imoexCash = params.initialCapital;
 
-  // Бенчмарк 2 — MCFTR (с дивидендами).
   let mcftrLots = 0;
   let mcftrCash = params.initialCapital;
 
@@ -167,7 +176,35 @@ export async function runBacktest(
 
     holdings = holdings.filter((h) => h.lots > 0);
 
-    // IMOEX без дивидендов.
+    // Начисляем дивиденды на позиции портфеля.
+    // Прокси: разница доходностей MCFTR и IMOEX за месяц = дивидендная
+    // доходность индекса за тот же месяц.
+    if (i > 0) {
+      const prevDate = days[i - 1];
+      const mcftrNow = priceOnSeries(mcftrPrices, date);
+      const mcftrPrev = priceOnSeries(mcftrPrices, prevDate);
+      const imoexNow = priceOnSeries(imoexPrices, date);
+      const imoexPrev = priceOnSeries(imoexPrices, prevDate);
+
+      if (
+        mcftrNow && mcftrPrev && imoexNow && imoexPrev &&
+        mcftrPrev > 0 && imoexPrev > 0
+      ) {
+        const mcftrRet = mcftrNow / mcftrPrev - 1;
+        const imoexRet = imoexNow / imoexPrev - 1;
+        const impliedYield = mcftrRet - imoexRet;
+        if (impliedYield > 0) {
+          const currentPosValue = positionsValue(
+            holdings,
+            universe,
+            prices,
+            date,
+          );
+          cash += currentPosValue * impliedYield;
+        }
+      }
+    }
+
     const imoexPrice = priceOnSeries(imoexPrices, date);
     if (imoexPrice && imoexPrice > 0 && imoexCash > 0) {
       const lots = Math.floor(imoexCash / imoexPrice);
@@ -175,7 +212,6 @@ export async function runBacktest(
       imoexCash -= lots * imoexPrice;
     }
 
-    // MCFTR с дивидендами.
     const mcftrPrice = priceOnSeries(mcftrPrices, date);
     if (mcftrPrice && mcftrPrice > 0 && mcftrCash > 0) {
       const lots = Math.floor(mcftrCash / mcftrPrice);
