@@ -23,7 +23,7 @@ interface Props {
 const FALLBACK_PORTFOLIO_VALUE = 100_000;
 
 export function Dashboard({ universe }: Props) {
-  const { positions, cash } = usePortfolio();
+  const { positions, capital } = usePortfolio();
   const [chartTicker, setChartTicker] = useState<string | null>(null);
   const [chartOpen, setChartOpen] = useState(false);
 
@@ -38,14 +38,24 @@ export function Dashboard({ universe }: Props) {
     [universe],
   );
 
-  const portfolioValue = useMemo(() => {
-    const posValue = positions.reduce((s, p) => {
-      const t = universe.find((u) => u.ticker === p.ticker);
-      return s + (t ? t.lotSize * t.price * p.lots : 0);
-    }, 0);
-    const total = posValue + cash;
-    return total > 0 ? total : FALLBACK_PORTFOLIO_VALUE;
-  }, [positions, universe, cash]);
+    const positionsValue = useMemo(
+    () =>
+      positions.reduce((s, p) => {
+        const t = universe.find((u) => u.ticker === p.ticker);
+        return s + (t ? t.lotSize * t.price * p.lots : 0);
+      }, 0),
+    [positions, universe],
+  );
+
+  const portfolioValue = useMemo(
+    () => (capital > 0 ? capital : FALLBACK_PORTFOLIO_VALUE),
+    [capital],
+  );
+
+  const cash = useMemo(
+    () => Math.max(0, capital - positionsValue),
+    [capital, positionsValue],
+  );
 
   const plan = useMemo(
     () => buildPortfolio(universe, { portfolioValue }),

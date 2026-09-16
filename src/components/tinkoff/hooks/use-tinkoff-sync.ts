@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTinkoff } from '@/stores/tinkoff';
 import { usePortfolio } from '@/stores/portfolio';
+import { moneyToNumber } from '@/lib/tinkoff/parse';
 import type { Ticker } from '@/types';
 import type { TinkoffAccount } from '@/lib/tinkoff/types';
 
@@ -118,8 +119,9 @@ export function useTinkoffSync(
         setMessage({ kind: 'err', text: j.error ?? 'ошибка' });
         return;
       }
-      const positions = j.positions ?? [];
-      replaceAll(positions);
+            const positions = j.positions ?? [];
+      const capital = j.totalValue ? moneyToNumber(j.totalValue) : 0;
+      replaceAll(positions, capital);
       const skipped = j.skippedCount ?? 0;
       setMessage({
         kind: 'ok',

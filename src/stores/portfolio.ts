@@ -1,5 +1,8 @@
 // language: TypeScript, target: portfolio state
 // Состояние портфеля. localStorage + Zustand.
+//
+// Модель: один источник правды — capital (общий капитал счёта).
+// Свободный кэш = capital − positionsValue, вычисляется в UI.
 // Никаких ПДн на сервере — всё на устройстве пользователя.
 
 'use client';
@@ -10,22 +13,34 @@ import type { Position } from '@/types';
 
 interface PortfolioState {
   positions: Position[];
-  /** Свободный кэш на счёте, руб. */
-  cash: number;
+  /** Общий капитал счёта: позиции + свободный кэш, ₽. */
+  capital: number;
   add: (ticker: string, lots: number) => void;
   remove: (ticker: string) => void;
   setLots: (ticker: string, lots: number) => void;
-  setCash: (cash: number) => void;
+  setCapital: (capital: number) => void;
   clear: () => void;
-  replaceAll: (positions: Position[]) => void;
-  applyRebalance: (actions: { ticker: string; side: 'buy' | 'sell'; lots: number }[]) => void;
+  replaceAll: (positions: Position[], capital: number) => void;
+  applyRebalance: (actions: RebalanceAction[]) => void;
+}
+
+interface RebalanceAction {
+  ticker: string;
+  side: 'buy' | 'sell';
+  lots: number;
+}
+
+interface PersistedV1 {
+  positions?: Position[];
+  cash?: number;
 }
 
 export const usePortfolio = create<PortfolioState>()(
   persist(
     (set) => ({
       positions: [],
-      cash: 0,
+      capital: 0,
+
       add: (ticker, lots) =>
         set((s) => {
           const t = ticker.toUpperCase().trim();
@@ -40,10 +55,12 @@ export const usePortfolio = create<PortfolioState>()(
           }
           return { positions: [...s.positions, { ticker: t, lots }] };
         }),
+
       remove: (ticker) =>
         set((s) => ({
           positions: s.positions.filter((p) => p.ticker !== ticker),
         })),
+
       setLots: (ticker, lots) =>
         set((s) => ({
           positions:
@@ -53,10 +70,17 @@ export const usePortfolio = create<PortfolioState>()(
                   p.ticker === ticker ? { ...p, lots } : p,
                 ),
         })),
-      setCash: (cash) => set({ cash: Math.max(0, cash) }),
-      clear: () => set({ positions: [], cash: 0 }),
-      replaceAll: (positions) =>
-        set({ positions: positions.map((p) => ({ ...p })) }),
+
+      setCapital: (capital) => set({ capital: Math.max(0, capital) }),
+
+      clear: () => set({ positions: [], capital: 0 }),
+
+      replaceAll: (positions, capital) =>
+        set({
+          positions: positions.map((p) => ({ ...p })),
+          capital: Math.max(0, capital),
+        }),
+
       applyRebalance: (actions) =>
         set((s) => {
           let next = s.positions.map((p) => ({ ...p }));
@@ -75,6 +99,24 @@ export const usePortfolio = create<PortfolioState>()(
           return { positions: next };
         }),
     }),
-    { name: 'moex-portfolio' },
+    {
+      name: 'moex-portfolio',
+      version: 2,
+      migrate: (persistedState, version) => {
+        // Миграция со старой схемы: cash был свободным кэшем.
+        // В новой схеме capital = общий счёт. Простейший маппинг:
+        // старое cash → новое capital. Позиции пересчитаются в UI.
+        if (version < 2 && persistedState) {
+          const old = persistedState as PersistedV1;
+          if (typeof old.cash === 'number') {
+            return {
+              ...(persistedState as object),
+              capital: old.cash,
+            };
+          }
+        }
+        return persistedState;
+      },
+    },
   ),
 );
