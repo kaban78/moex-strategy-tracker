@@ -8,6 +8,8 @@ import type {
   TinkoffAccount,
   TinkoffPortfolio,
   TinkoffPosition,
+  TinkoffDividend,
+  GetDividendsResponse,
 } from './types';
 
 const BASE = 'https://invest-public-api.tinkoff.ru/rest';
@@ -123,6 +125,50 @@ export async function fetchSharesUidMap(
   for (const inst of data.instruments ?? []) {
     if (!inst.uid || !inst.ticker) continue;
     map.set(inst.uid, inst.ticker);
+  }
+  return map;
+}
+
+
+/**
+ * Дивиденды по бумаге. Принимает instrumentUid (не ticker).
+ * Опциональные from/to — ISO-8601 (например "2020-01-01T00:00:00Z").
+ */
+export async function fetchDividends(
+  token: string,
+  instrumentUid: string,
+  from?: string,
+  to?: string,
+): Promise<TinkoffDividend[]> {
+  const body: Record<string, unknown> = { instrumentId: instrumentUid };
+  if (from) body.from = from;
+  if (to) body.to = to;
+
+  const data = await post<GetDividendsResponse>({
+    token,
+    path: `${SERVICE_INSTRUMENTS}/GetDividends`,
+    body,
+  });
+  return data.dividends ?? [];
+}
+
+/**
+ * Карта ticker → instrumentUid для всех акций.
+ * Обратная к fetchSharesUidMap. Используется для дивидендов.
+ */
+export async function fetchSharesTickerMap(
+  token: string,
+): Promise<Map<string, string>> {
+  const data = await post<SharesResponse>({
+    token,
+    path: `${SERVICE_INSTRUMENTS}/Shares`,
+    body: { instrumentStatus: 'INSTRUMENT_STATUS_BASE' },
+  });
+
+  const map = new Map<string, string>();
+  for (const inst of data.instruments ?? []) {
+    if (!inst.uid || !inst.ticker) continue;
+    map.set(inst.ticker, inst.uid);
   }
   return map;
 }

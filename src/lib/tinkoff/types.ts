@@ -42,3 +42,21 @@ export interface TinkoffPortfolio {
   totalAmountCurrencies: MoneyValue;
   expectedYield: MoneyValue;
 }
+
+/** Дивидендная выплата. */
+export interface TinkoffDividend {
+  dividendNet: MoneyValue;
+  paymentDate: string;
+  declaredDate: string;
+  lastBuyDate: string;
+  dividendType: string;
+  recordDate: string;
+  regularity: string;
+  closePrice: MoneyValue;
+  yieldValue: MoneyValue;
+  createdAt: string;
+}
+
+export interface GetDividendsResponse {
+  dividends: TinkoffDividend[];
+}
