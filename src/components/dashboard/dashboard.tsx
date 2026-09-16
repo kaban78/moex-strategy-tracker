@@ -12,6 +12,7 @@ import { PriceChartDialog } from '@/components/price-chart/price-chart-dialog';
 import { TargetPortfolioCard } from './target-portfolio-card';
 import { DriftCard } from './drift-card';
 import { RebalanceCard } from './rebalance-card';
+import { TinkoffSync } from '@/components/tinkoff-sync';
 
 interface Props {
   universe: Ticker[];
@@ -72,6 +73,7 @@ export function Dashboard({ universe }: Props) {
 
   return (
     <div className="space-y-6">
+      <TinkoffSync universe={universe} />
       <PortfolioEditor lotCosts={lotCosts} />
 
       <TargetPortfolioCard
