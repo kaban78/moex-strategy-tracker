@@ -25,15 +25,27 @@ interface RequestOptions {
 }
 
 async function post<T>({ token, path, body }: RequestOptions): Promise<T> {
-  const res = await fetch(`${BASE}/${path}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    cache: 'no-store',
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+  } catch (cause) {
+    const c = cause as { message?: string; cause?: unknown };
+    const inner = c.cause
+      ? (c.cause as { message?: string; code?: string })
+      : null;
+    const detail = [c.message, inner?.code, inner?.message]
+      .filter(Boolean)
+      .join(' / ');
+    throw new Error(`T-Invest fetch failed: ${detail || 'unknown'}`);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');

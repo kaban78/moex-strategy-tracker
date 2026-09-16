@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTinkoff } from '@/stores/tinkoff';
 import { usePortfolio } from '@/stores/portfolio';
 import type { Ticker } from '@/types';
@@ -34,13 +34,19 @@ export function TinkoffSync({ universe }: Props) {
   const { token, accountId, setToken, setAccountId, clear } = useTinkoff();
   const { replaceAll } = usePortfolio();
 
-  const [draftToken, setDraftToken] = useState(token);
+  const [mounted, setMounted] = useState(false);
+  const [draftToken, setDraftToken] = useState('');
   const [accounts, setAccounts] = useState<TinkoffAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [loadingSync, setLoadingSync] = useState(false);
   const [message, setMessage] = useState<
     { kind: 'ok' | 'err'; text: string } | null
   >(null);
+
+  useEffect(() => {
+    setMounted(true);
+    setDraftToken(token);
+  }, [token]);
 
   async function loadAccounts() {
     const t = draftToken.trim();
@@ -127,6 +133,19 @@ export function TinkoffSync({ universe }: Props) {
     setDraftToken('');
     setAccounts([]);
     setMessage(null);
+  }
+
+  if (!mounted) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Т-Инвестиции — синхронизация портфеля</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">загрузка...</p>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
