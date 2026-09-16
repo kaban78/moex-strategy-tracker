@@ -38,22 +38,29 @@ export function Donut({
   const cy = size / 2;
   const circumference = 2 * Math.PI * radius;
 
+  // Считаем кумулятивный offset для каждой дуги.
   let offset = 0;
-  const arcs = slices.map((sl, i) => {
+  const arcs = slices.map((sl) => {
     const fraction = sl.value / total;
     const dash = fraction * circumference;
     const arc = (
       <circle
-        key={i}
+        key={sl.label}
         cx={cx}
         cy={cy}
         r={radius}
         fill="none"
         stroke={sl.color}
         strokeWidth={thickness}
-        strokeDasharray={`${dash} ${circumference}`}
+        strokeLinecap="butt"
+        strokeDasharray={`${dash} ${circumference - dash}`}
         strokeDashoffset={-offset}
         transform={`rotate(-90 ${cx} ${cy})`}
+        style={{
+          transition:
+            'stroke-dasharray 500ms cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 500ms cubic-bezier(0.4, 0, 0.2, 1), stroke 300ms ease-out',
+          animation: 'donutFadeIn 400ms ease-out',
+        }}
       />
     );
     offset += dash;
@@ -61,7 +68,12 @@ export function Donut({
   });
 
   return (
-    <svg width={size} height={size} role="img">
+    <svg
+      width={size}
+      height={size}
+      role="img"
+      style={{ overflow: 'visible' }}
+    >
       <circle
         cx={cx}
         cy={cy}

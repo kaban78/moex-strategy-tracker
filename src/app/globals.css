@@ -128,3 +128,12 @@
     @apply font-sans;
   }
 }
+
+@keyframes donutFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

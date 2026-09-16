@@ -12,7 +12,8 @@ interface Props {
 }
 
 export function PortfolioEditor({ lotCosts }: Props) {
-  const { positions, capital, add, remove, setCapital, clear } = usePortfolio();
+  const { positions, capital, add, remove, setLots, setCapital, clear } =
+    usePortfolio();
 
   const positionsValue = positions.reduce((s, p) => {
     const lc = lotCosts[p.ticker] ?? 0;
@@ -42,6 +43,7 @@ export function PortfolioEditor({ lotCosts }: Props) {
           positions={positions}
           lotCosts={lotCosts}
           onRemove={remove}
+          onSetLots={setLots}
         />
       </CardContent>
     </Card>

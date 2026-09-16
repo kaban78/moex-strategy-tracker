@@ -82,8 +82,8 @@ export function PortfolioStructureCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap gap-6 items-start">
-          <div className="shrink-0">
+         <div className="flex flex-wrap gap-6 items-start">
+          <div className="shrink-0 transition-transform duration-300 hover:scale-[1.02]">
             <Donut
               slices={slices}
               centerValue={String(totalPositions)}
