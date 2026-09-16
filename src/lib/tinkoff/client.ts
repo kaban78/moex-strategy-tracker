@@ -152,23 +152,53 @@ export async function fetchDividends(
   return data.dividends ?? [];
 }
 
+interface TickerMapCache {
+  at: number;
+  map: Map<string, string>;
+}
+
+let tickerMapCache: TickerMapCache | null = null;
+let tickerMapInFlight: Promise<Map<string, string>> | null = null;
+
+const TICKER_MAP_TTL = 6 * 60 * 60 * 1000; // 6 часов
+
 /**
- * Карта ticker → instrumentUid для всех акций.
- * Обратная к fetchSharesUidMap. Используется для дивидендов.
+ * Карта ticker → instrumentUid для всех акций T-Invest.
+ *
+ * Кэшируется в памяти процесса на 6 часов. Также блокирует
+ * одновременные запросы от нескольких тикеров — иначе 46 параллельных
+ * вызовов ловят HTTP 429.
  */
 export async function fetchSharesTickerMap(
-  token: string,
+  _token: string,
 ): Promise<Map<string, string>> {
-  const data = await post<SharesResponse>({
-    token,
-    path: `${SERVICE_INSTRUMENTS}/Shares`,
-    body: { instrumentStatus: 'INSTRUMENT_STATUS_BASE' },
-  });
-
-  const map = new Map<string, string>();
-  for (const inst of data.instruments ?? []) {
-    if (!inst.uid || !inst.ticker) continue;
-    map.set(inst.ticker, inst.uid);
+  const now = Date.now();
+  if (tickerMapCache && now - tickerMapCache.at < TICKER_MAP_TTL) {
+    return tickerMapCache.map;
   }
-  return map;
+  if (tickerMapInFlight) {
+    return tickerMapInFlight;
+  }
+
+  tickerMapInFlight = (async () => {
+    try {
+      const data = await post<SharesResponse>({
+        token: _token,
+        path: `${SERVICE_INSTRUMENTS}/Shares`,
+        body: { instrumentStatus: 'INSTRUMENT_STATUS_BASE' },
+      });
+
+      const map = new Map<string, string>();
+      for (const inst of data.instruments ?? []) {
+        if (!inst.uid || !inst.ticker) continue;
+        map.set(inst.ticker, inst.uid);
+      }
+      tickerMapCache = { at: Date.now(), map };
+      return map;
+    } finally {
+      tickerMapInFlight = null;
+    }
+  })();
+
+  return tickerMapInFlight;
 }

@@ -59,20 +59,42 @@ export async function POST(req: NextRequest) {
   try {
     const tickerMap = await fetchSharesTickerMap(token);
 
-    const results = await Promise.all(
-      tickers.map(async (ticker) => {
+    // TS: narrowing token не работает в замыкании worker.
+    const tok: string = token;
+    const CONCURRENT = 6;
+    const results: (
+      | { ticker: string; divs: TinkoffDividend[] }
+      | { ticker: string; error: string }
+    )[] = new Array(tickers.length);
+
+    let cursor = 0;
+    async function worker() {
+      while (true) {
+        const i = cursor++;
+        if (i >= tickers.length) return;
+        const ticker = tickers[i];
         const uid = tickerMap.get(ticker);
-        if (!uid) return { ticker, error: 'instrumentUid not found' };
+        if (!uid) {
+          results[i] = { ticker, error: 'instrumentUid not found' };
+          continue;
+        }
         try {
-          const divs = await fetchDividends(token, uid);
-          return { ticker, divs };
+          const divs = await fetchDividends(tok, uid);
+          results[i] = { ticker, divs };
         } catch (e) {
-          return {
+          results[i] = {
             ticker,
             error: e instanceof Error ? e.message : 'fetch error',
           };
         }
-      }),
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(CONCURRENT, tickers.length) },
+        () => worker(),
+      ),
     );
 
     const dividendsByTicker: Record<string, TinkoffDividend[]> = {};
