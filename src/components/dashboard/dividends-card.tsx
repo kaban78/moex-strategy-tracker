@@ -1,13 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
 import type { Position, Ticker } from '@/types';
-import type { TinkoffDividend } from '@/lib/tinkoff/types';
-import {
-  computeDividends,
-  type DividendSummary,
-} from '@/lib/engine/dividends';
-import { useTinkoff } from '@/stores/tinkoff';
+import { useDividends } from './hooks/use-dividends';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -28,12 +22,6 @@ interface Props {
   portfolioValue: number;
 }
 
-interface DividendsResponse {
-  ok: boolean;
-  dividendsByTicker?: Record<string, TinkoffDividend[]>;
-  error?: string;
-}
-
 function formatDate(iso: string): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return iso;
@@ -44,57 +32,14 @@ function formatDate(iso: string): string {
   });
 }
 
-export function DividendsCard({
-  positions,
-  universe,
-  portfolioValue,
-}: Props) {
-  const { token } = useTinkoff();
-  const [summary, setSummary] = useState<DividendSummary | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function DividendsCard({ positions, universe, portfolioValue }: Props) {
+  const { summary, loading, error, refresh, enabled } = useDividends({
+    positions,
+    universe,
+    portfolioValue,
+  });
 
-  const load = useCallback(async () => {
-    if (!token || positions.length === 0) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const tickers = positions.map((p) => p.ticker);
-      const res = await fetch('/api/tinkoff/dividends', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, tickers }),
-      });
-      const j = (await res.json()) as DividendsResponse;
-      if (!j.ok) {
-        setError(j.error ?? 'ошибка загрузки');
-        return;
-      }
-      const map = new Map<string, TinkoffDividend[]>(
-        Object.entries(j.dividendsByTicker ?? {}),
-      );
-      setSummary(
-        computeDividends({
-          positions,
-          universe,
-          dividendsByTicker: map,
-          portfolioValue,
-        }),
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'ошибка сети');
-    } finally {
-      setLoading(false);
-    }
-  }, [token, positions, universe, portfolioValue]);
-
-  useEffect(() => {
-    if (!token || positions.length === 0) return;
-    void load();
-  }, [load, token, positions.length]);
-
-  if (!token) return null;
-  if (positions.length === 0) return null;
+  if (!enabled) return null;
 
   return (
     <Card>
@@ -114,7 +59,7 @@ export function DividendsCard({
           <Button
             variant="ghost"
             size="sm"
-            onClick={load}
+            onClick={refresh}
             disabled={loading}
             className="ml-auto"
           >
