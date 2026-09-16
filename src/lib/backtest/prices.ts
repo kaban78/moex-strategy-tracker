@@ -153,3 +153,58 @@ export function priceOn(
   }
   return best ? (series.get(best) ?? null) : null;
 }
+
+
+/**
+ * Цены закрытия IMOEX за диапазон. Отдельный эндпоинт —
+ * индексы не торгуются на TQBR, у них свой путь.
+ */
+async function fetchIndexPricesFromIss(
+  from: string,
+  till: string,
+): Promise<Map<string, number>> {
+  const url = new URL(
+    `${ISS_BASE}/history/engines/stock/markets/index/securities/IMOEX.json`,
+  );
+  url.searchParams.set('from', from);
+  url.searchParams.set('till', till);
+  url.searchParams.set('history.columns', 'TRADEDATE,CLOSE');
+  url.searchParams.set('iss.meta', 'off');
+
+  const res = await fetch(url.toString(), {
+    headers: { 'User-Agent': USER_AGENT },
+    next: { revalidate: 3600 },
+  });
+  if (!res.ok) {
+    throw new Error(`MOEX IMOEX history → HTTP ${res.status}`);
+  }
+
+  const json = (await res.json()) as IssJson;
+  const rows = parseIssTable<HistoryRow>(json.history);
+
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (typeof r.CLOSE === 'number' && r.CLOSE > 0 && r.TRADEDATE) {
+      map.set(r.TRADEDATE, r.CLOSE);
+    }
+  }
+  return map;
+}
+
+const indexCache = new Map<string, Map<string, number>>();
+
+/**
+ * Цены IMOEX. Кэширует по ключу from|till, как fetchPrices.
+ */
+export async function fetchIndexPrices(
+  from: string,
+  till: string,
+): Promise<Map<string, number>> {
+  const key = `${from}|${till}`;
+  const cached = indexCache.get(key);
+  if (cached) return cached;
+
+  const data = await fetchIndexPricesFromIss(from, till);
+  indexCache.set(key, data);
+  return data;
+}

@@ -13,7 +13,7 @@ import {
   monthStarts,
 } from './calendar';
 import { fetchUniverseOn } from './universe';
-import { fetchPrices, priceOn } from './prices';
+import { fetchPrices, fetchIndexPrices, priceOn } from './prices';
 import type {
   BacktestParams,
   BacktestResult,
@@ -81,6 +81,13 @@ export async function runBacktest(
     params.startDate,
     params.endDate,
   );
+
+  // Цены IMOEX — отдельный эндпоинт, кладём в ту же карту под ключом IMOEX.
+  const imoexPrices = await fetchIndexPrices(
+    params.startDate,
+    params.endDate,
+  );
+  prices.set('IMOEX', imoexPrices);
 
   let holdings: Holding[] = [];
   let cash = params.initialCapital;
