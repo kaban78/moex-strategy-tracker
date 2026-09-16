@@ -188,3 +188,34 @@ export function priceOn(
   }
   return best ? (series.get(best) ?? null) : null;
 }
+
+
+/**
+ * Цена на дату из плоского ряда { date → price }.
+ * Для индексов (IMOEX, MCFTR), у которых нет ticker-обёртки.
+ * Возвращает ближайшее предыдущее значение.
+ */
+export function priceOnSeries(
+  series: Map<string, number>,
+  date: string,
+): number | null {
+  if (series.size === 0) return null;
+  if (series.has(date)) return series.get(date) ?? null;
+
+  const dates = Array.from(series.keys()).sort();
+  if (date < dates[0]) return null;
+
+  let lo = 0;
+  let hi = dates.length - 1;
+  let best: string | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (dates[mid] <= date) {
+      best = dates[mid];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best ? (series.get(best) ?? null) : null;
+}

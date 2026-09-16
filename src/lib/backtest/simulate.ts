@@ -11,7 +11,7 @@ import { computeDrift } from '@/lib/engine/drift';
 import { rebalance } from '@/lib/engine/rebalance';
 import { getTradingDays, monthStarts } from './calendar';
 import { fetchUniverseOn } from './universe';
-import { fetchPrices, fetchIndexPrices, priceOn } from './prices';
+import { fetchPrices, fetchIndexPrices, priceOn, priceOnSeries } from './prices';
 import type {
   BacktestParams,
   BacktestResult,
@@ -44,31 +44,6 @@ function positionsValue(
 
 function holdingsToPositions(holdings: Holding[]): Position[] {
   return holdings.map((h) => ({ ticker: h.ticker, lots: h.lots }));
-}
-
-function priceOnSeries(
-  series: Map<string, number>,
-  date: string,
-): number | null {
-  if (series.size === 0) return null;
-  if (series.has(date)) return series.get(date) ?? null;
-
-  const dates = Array.from(series.keys()).sort();
-  if (date < dates[0]) return null;
-
-  let lo = 0;
-  let hi = dates.length - 1;
-  let best: string | null = null;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (dates[mid] <= date) {
-      best = dates[mid];
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return best ? (series.get(best) ?? null) : null;
 }
 
 function diffDays(a: string, b: string): number {
