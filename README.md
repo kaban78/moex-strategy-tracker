@@ -89,6 +89,32 @@ pnpm dev
 
 ---
 
+### T-Invest API и Russian Trusted CA
+
+Если используешь интеграцию с Т-Инвестициями на Linux, Node.js может не
+знать про российский национальный УЦ, которым T-Invest подписывает свои
+сертификаты. Симптом: `SELF_SIGNED_CERT_IN_CHAIN` при запросе к
+`invest-public-api.tinkoff.ru`.
+
+Извлечь цепочку и подложить Node.js:
+
+```bash
+node -e "..."  # скрипт grab-chain.mjs, см. docs/
+sudo mkdir -p /usr/local/share/ca-certificates/russian-trusted
+sudo cp /tmp/russian-trusted-chain.pem /usr/local/share/ca-certificates/russian-trusted/chain.pem
+echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/russian-trusted/chain.pem' >> ~/.zshrc
+После — перезапустить pnpm dev.
+
+Сохрани `Ctrl+O`, `Enter`, `Ctrl+X`.
+
+## СКРИПТ В РЕПО
+
+Положи `grab-chain.mjs` в репо, чтобы README мог на него ссылаться:
+
+```bash
+mkdir -p scripts
+cp /tmp/grab-chain.mjs scripts/grab-tls-chain.mjs
+
 ## Команды
 
 pnpm dev          # dev-сервер
