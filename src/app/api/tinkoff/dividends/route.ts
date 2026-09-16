@@ -1,10 +1,8 @@
 // language: TypeScript, target: Next.js App Router API route
 // POST /api/tinkoff/dividends
-// Body: { token, tickers: string[] }
-// Response: { ok: true, dividendsByTicker: { [ticker]: TinkoffDividend[] } }
 //
-// Получает дивиденды по каждой бумаге с ограничением параллелизма
-// (T-Invest режет на ~30 одновременных). Токен не сохраняется на сервере.
+// T-Invest режет запросы при высокой параллельности. Работаем батчами
+// по CONCURRENT штук с retry и backoff.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchDividends, fetchTickerMaps } from '@/lib/tinkoff/client';
@@ -18,13 +16,39 @@ interface Body {
   tickers?: string[];
 }
 
-interface ErrorItem {
-  ticker: string;
-  error: string;
+const CONCURRENT = 4;
+const MAX_TICKERS = 60;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-const CONCURRENT = 6;
-const MAX_TICKERS = 60;
+async function fetchDividendsWithRetry(
+  token: string,
+  uid: string,
+): Promise<TinkoffDividend[]> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fetchDividends(token, uid);
+    } catch (e) {
+      lastError = e;
+      const msg = e instanceof Error ? e.message : '';
+      // 429 или 5xx — повторяем. 4xx — выходим сразу.
+      const isRetryable =
+        msg.includes('429') ||
+        msg.includes('500') ||
+        msg.includes('502') ||
+        msg.includes('503') ||
+        msg.includes('504');
+      if (!isRetryable || attempt === MAX_RETRIES) break;
+      await sleep(RETRY_DELAY_MS * Math.pow(2, attempt));
+    }
+  }
+  throw lastError;
+}
 
 export async function POST(req: NextRequest) {
   let body: Body;
@@ -78,7 +102,7 @@ export async function POST(req: NextRequest) {
           continue;
         }
         try {
-          const divs = await fetchDividends(tok, uid);
+          const divs = await fetchDividendsWithRetry(tok, uid);
           results[i] = { ticker, divs };
         } catch (e) {
           results[i] = {
@@ -97,7 +121,7 @@ export async function POST(req: NextRequest) {
     );
 
     const dividendsByTicker: Record<string, TinkoffDividend[]> = {};
-    const errors: ErrorItem[] = [];
+    const errors: { ticker: string; error: string }[] = [];
 
     for (const r of results) {
       if ('error' in r && r.error) {

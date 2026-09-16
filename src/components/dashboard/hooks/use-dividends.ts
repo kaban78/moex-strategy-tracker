@@ -12,6 +12,7 @@ import { useTinkoff } from '@/stores/tinkoff';
 interface DividendsResponse {
   ok: boolean;
   dividendsByTicker?: Record<string, TinkoffDividend[]>;
+  errors?: { ticker: string; error: string }[];
   error?: string;
 }
 
@@ -68,6 +69,12 @@ export function useDividends({
           portfolioValue,
         }),
       );
+      // Частичный провал — сообщаем тикеры, но показываем данные.
+      if (j.errors && j.errors.length > 0) {
+        setError(
+          `не удалось загрузить: ${j.errors.length} тикер(ов). Остальные данные показаны.`,
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'ошибка сети');
     } finally {

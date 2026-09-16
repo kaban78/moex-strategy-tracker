@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import type { Position, Ticker } from '@/types';
 import { useDividends } from './hooks/use-dividends';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,14 +23,42 @@ interface Props {
   portfolioValue: number;
 }
 
-function formatDate(iso: string): string {
+interface Payment {
+  recordDate: string;
+  paymentDate: string;
+  perShare: number;
+  total: number;
+  future: boolean;
+}
+
+interface TickerGroup {
+  ticker: string;
+  lots: number;
+  payments: Payment[];
+  sum12m: number;
+  /** Сколько лет покрывают выплаты. */
+  yearsSpan: number;
+  /** Средняя годовая выплата: sumAll / yearsSpan. */
+  avgPerYear: number;
+}
+
+function shortDate(iso: string): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return iso;
-  return d.toLocaleDateString('ru-RU', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const yy = String(d.getUTCFullYear()).slice(2);
+  return `${dd}.${mm}.${yy}`;
+}
+
+/**
+ * Компактное форматирование дивиденда на акцию.
+ * Округляет до копеек: 0.32₽ вместо 0.321425305₽.
+ */
+function fmtPerShare(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  if (v >= 1) return v.toFixed(2).replace(/\.?0+$/, '') + '₽';
+  return v.toFixed(2) + '₽';
 }
 
 export function DividendsCard({ positions, universe, portfolioValue }: Props) {
@@ -38,6 +67,66 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
     universe,
     portfolioValue,
   });
+
+  const groups = useMemo<TickerGroup[]>(() => {
+    if (!summary) return [];
+    const today = new Date().toISOString().slice(0, 10);
+    const map = new Map<string, TickerGroup>();
+    const oneYearAgo = Date.now() - 365 * 24 * 3600 * 1000;
+
+    for (const r of summary.rows) {
+      const key = r.ticker;
+      if (!map.has(key)) {
+        map.set(key, {
+          ticker: key,
+          lots: r.lots,
+          payments: [],
+          sum12m: 0,
+          yearsSpan: 0,
+          avgPerYear: 0,
+        });
+      }
+      const g = map.get(key)!;
+      const record = r.recordDate.slice(0, 10);
+      const future = record >= today;
+
+      g.payments.push({
+        recordDate: r.recordDate,
+        paymentDate: r.paymentDate,
+        perShare: r.perShare,
+        total: r.total,
+        future,
+      });
+
+      const ts = new Date(r.recordDate).getTime();
+      if (Number.isFinite(ts) && ts >= oneYearAgo) {
+        g.sum12m += r.total;
+      }
+    }
+
+    for (const g of map.values()) {
+      g.payments.sort(
+        (a, b) =>
+          new Date(b.recordDate).getTime() -
+          new Date(a.recordDate).getTime(),
+      );
+
+      // Годы: от первой до последней выплаты включительно.
+      if (g.payments.length > 0) {
+        const newest = new Date(g.payments[0].recordDate).getTime();
+        const oldest = new Date(
+          g.payments[g.payments.length - 1].recordDate,
+        ).getTime();
+        const ms = Math.max(0, newest - oldest);
+        // Плюс 1 — потому что от 2023 до 2026 это 4 разных года.
+        g.yearsSpan = Math.max(1, Math.ceil(ms / (365.25 * 24 * 3600 * 1000)) + 1);
+        const sumAll = g.payments.reduce((s, p) => s + p.total, 0);
+        g.avgPerYear = sumAll / g.yearsSpan;
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.sum12m - a.sum12m);
+  }, [summary]);
 
   if (!enabled) return null;
 
@@ -53,6 +142,9 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
               </Badge>
               <Badge variant="outline">
                 доходность: {formatPercent(summary.yieldLast12Months * 100)}
+              </Badge>
+              <Badge variant="outline">
+                бумаг платят: {summary.payingTickers} из {summary.totalTickers}
               </Badge>
             </>
           )}
@@ -70,63 +162,89 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
       <CardContent>
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {!error && summary && summary.rows.length === 0 && (
+        {!error && groups.length === 0 && summary && (
           <p className="text-sm text-muted-foreground">
-            По текущим позициям нет данных о дивидендах. Возможно, бумаги
-            не платят дивиденды или данные недоступны.
+            По текущим позициям нет данных о дивидендах.
           </p>
         )}
 
-        {!error && summary && summary.rows.length > 0 && (
+        {groups.length > 0 && (
           <>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Тикер</TableHead>
-                  <TableHead>Отсечка</TableHead>
-                  <TableHead>Выплата</TableHead>
-                  <TableHead className="text-right">На акцию</TableHead>
-                  <TableHead className="text-right">На лот</TableHead>
-                  <TableHead className="text-right">Лотов</TableHead>
-                  <TableHead className="text-right">Сумма</TableHead>
+                  <TableHead className="text-right w-16">Лотов</TableHead>
+                  <TableHead>Выплаты — отсечка / на акцию</TableHead>
+                  <TableHead className="text-right">За 12 мес</TableHead>
+                  <TableHead className="text-right">
+                    Средне­годовые
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {summary.rows.map((r, i) => (
-                  <TableRow key={r.ticker + '-' + r.recordDate + '-' + i}>
-                    <TableCell className="font-mono">{r.ticker}</TableCell>
-                    <TableCell className="text-xs">
-                      {formatDate(r.recordDate)}
+                {groups.map((g) => (
+                  <TableRow key={g.ticker}>
+                    <TableCell className="font-mono align-top">
+                      {g.ticker}
                     </TableCell>
-                    <TableCell className="text-xs">
-                      {formatDate(r.paymentDate)}
+                    <TableCell className="text-right align-top">
+                      {g.lots}
                     </TableCell>
-                    <TableCell className="text-right">
-                      {formatRub(r.perShare)}
+                    <TableCell className="align-top">
+                      <div className="flex flex-wrap gap-1">
+                        {g.payments.map((p, i) => (
+                          <span
+                            key={p.recordDate + '-' + i}
+                            className={
+                              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono whitespace-nowrap ' +
+                              (p.future
+                                ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
+                                : 'bg-muted text-muted-foreground border border-transparent')
+                            }
+                            title={
+                              p.paymentDate
+                                ? `Выплата ${shortDate(p.paymentDate)}: ${formatRub(p.total)}`
+                                : `Сумма: ${formatRub(p.total)}`
+                            }
+                          >
+                            {shortDate(p.recordDate)}
+                            <span className="opacity-50">·</span>
+                            {fmtPerShare(p.perShare)}
+                          </span>
+                        ))}
+                      </div>
                     </TableCell>
-                    <TableCell className="text-right">
-                      {formatRub(r.perLot)}
+                    <TableCell className="text-right align-top font-medium">
+                      {formatRub(g.sum12m)}
                     </TableCell>
-                    <TableCell className="text-right">{r.lots}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatRub(r.total)}
+                    <TableCell className="text-right align-top text-muted-foreground">
+                      {formatRub(g.avgPerYear)}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
 
-            <div className="mt-4 text-sm text-muted-foreground">
-              Платящих бумаг: {summary.payingTickers} из {summary.totalTickers}.
-              Суммарно за всю доступную историю:{' '}
-              {formatRub(summary.totalAmount)}.
+            <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+              <span>
+                <span className="inline-block w-3 h-3 rounded align-middle bg-sky-500/15 border border-sky-500/40 mr-1" />
+                будущие / объявленные
+              </span>
+              <span>
+                <span className="inline-block w-3 h-3 rounded align-middle bg-muted mr-1" />
+                уже выплаченные
+              </span>
+              <span className="ml-auto">
+                Среднегодовые — сумма всех выплат / число лет, за которые они есть
+              </span>
             </div>
           </>
         )}
 
         <p className="mt-4 text-xs text-muted-foreground">
-          {DISCLAIMER_SHORT_RU} Данные о выплатах — из T-Invest API. Прошлые
-          выплаты не определяют будущие.
+          {DISCLAIMER_SHORT_RU} Данные из T-Invest API. Прошлые выплаты не
+          определяют будущие.
         </p>
       </CardContent>
     </Card>

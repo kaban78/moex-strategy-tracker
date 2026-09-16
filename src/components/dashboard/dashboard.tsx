@@ -8,13 +8,14 @@ import { rebalance } from '@/lib/engine/rebalance';
 import { allocateLots } from '@/lib/engine/target-weights';
 import { usePortfolio } from '@/stores/portfolio';
 import { PortfolioEditor } from '@/components/portfolio-editor';
+import { TinkoffSync } from '@/components/tinkoff/tinkoff-sync';
 import { PriceChartDialog } from '@/components/price-chart/price-chart-dialog';
 import { TargetPortfolioCard } from './target-portfolio-card';
 import { DriftCard } from './drift-card';
 import { RebalanceCard } from './rebalance-card';
 import { DividendsCard } from './dividends-card';
 import { PortfolioStructureCard } from './portfolio-structure-card';
-import { TinkoffSync } from '@/components/tinkoff/tinkoff-sync';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface Props {
   universe: Ticker[];
@@ -38,7 +39,7 @@ export function Dashboard({ universe }: Props) {
     [universe],
   );
 
-    const positionsValue = useMemo(
+  const positionsValue = useMemo(
     () =>
       positions.reduce((s, p) => {
         const t = universe.find((u) => u.ticker === p.ticker);
@@ -94,42 +95,54 @@ export function Dashboard({ universe }: Props) {
   return (
     <div className="space-y-6">
       <TinkoffSync universe={universe} />
-      <PortfolioEditor lotCosts={lotCosts} />
 
-      <TargetPortfolioCard
-        holdings={plan.holdings}
-        omittedCount={plan.omitted.length}
-        omissionWeight={plan.omissionWeight}
-        estimatedTrackingError={plan.estimatedTrackingError}
-        portfolioValue={portfolioValue}
-        allocation={allocation}
-        onTickerClick={handleTickerClick}
-      />
+      <Tabs defaultValue="portfolio" className="w-full">
+        <TabsList className="grid w-full grid-cols-3 max-w-lg">
+          <TabsTrigger value="portfolio">Портфель</TabsTrigger>
+          <TabsTrigger value="rebalance">Ребалансировка</TabsTrigger>
+          <TabsTrigger value="dividends">Дивиденды</TabsTrigger>
+        </TabsList>
 
-      <PortfolioStructureCard
-        holdings={plan.holdings}
-        allocationByTicker={allocationByTicker}
-      />
+        <TabsContent value="portfolio" className="space-y-6 mt-6">
+          <PortfolioEditor lotCosts={lotCosts} />
+          <PortfolioStructureCard
+            holdings={plan.holdings}
+            allocationByTicker={allocationByTicker}
+          />
+        </TabsContent>
 
-      {positions.length > 0 && (
-        <DriftCard
-          drifts={drift.drifts}
-          maxDrift={drift.maxDrift}
-          turnover={drift.turnover}
-          onTickerClick={handleTickerClick}
-        />
-      )}
+        <TabsContent value="rebalance" className="space-y-6 mt-6">
+          <TargetPortfolioCard
+            holdings={plan.holdings}
+            omittedCount={plan.omitted.length}
+            omissionWeight={plan.omissionWeight}
+            estimatedTrackingError={plan.estimatedTrackingError}
+            portfolioValue={portfolioValue}
+            allocation={allocation}
+            onTickerClick={handleTickerClick}
+          />
+          {positions.length > 0 && (
+            <DriftCard
+              drifts={drift.drifts}
+              maxDrift={drift.maxDrift}
+              turnover={drift.turnover}
+              onTickerClick={handleTickerClick}
+            />
+          )}
+          <RebalanceCard
+            rebalancePlan={rebalancePlan}
+            onTickerClick={handleTickerClick}
+          />
+        </TabsContent>
 
-      <RebalanceCard
-        rebalancePlan={rebalancePlan}
-        onTickerClick={handleTickerClick}
-      />
-
-      <DividendsCard
-        positions={positions}
-        universe={universe}
-        portfolioValue={portfolioValue}
-      />
+        <TabsContent value="dividends" className="space-y-6 mt-6">
+          <DividendsCard
+            positions={positions}
+            universe={universe}
+            portfolioValue={portfolioValue}
+          />
+        </TabsContent>
+      </Tabs>
 
       <PriceChartDialog
         ticker={chartTicker}

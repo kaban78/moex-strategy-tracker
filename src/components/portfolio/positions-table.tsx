@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import type { Position } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -34,10 +33,10 @@ export function PositionsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Тикер</TableHead>
-          <TableHead className="text-right w-24">Лотов</TableHead>
+          <TableHead className="text-right">Лотов</TableHead>
           <TableHead className="text-right">Лот, ₽</TableHead>
           <TableHead className="text-right">Стоимость</TableHead>
-          <TableHead></TableHead>
+          <TableHead className="w-10"></TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -78,19 +77,16 @@ interface LotsInputProps {
   onCommit: (v: number) => void;
 }
 
-/**
- * Инпут лотов с локальным state.
- * Обновляет store только при blur или Enter — чтобы не писать
- * на каждый keystroke и не ломать миграцию при стирании строки.
- */
 function LotsInput({ value, onCommit }: LotsInputProps) {
-  const [draft, setDraft] = useState(String(value));
+  const [draft, setDraft] = useState<string>(() => String(value));
+  const [focused, setFocused] = useState(false);
 
   useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
+    if (!focused) setDraft(String(value));
+  }, [value, focused]);
 
   function commit() {
+    setFocused(false);
     const n = parseInt(draft, 10);
     if (!Number.isFinite(n) || n < 0) {
       setDraft(String(value));
@@ -100,22 +96,22 @@ function LotsInput({ value, onCommit }: LotsInputProps) {
   }
 
   return (
-    <Input
+    <input
       type="number"
       min="0"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.currentTarget.blur();
-        }
+        if (e.key === 'Enter') e.currentTarget.blur();
         if (e.key === 'Escape') {
           setDraft(String(value));
           e.currentTarget.blur();
         }
       }}
-      className="h-7 w-16 text-right font-mono ml-auto"
+      style={{ width: '5rem', height: '1.75rem' }}
+      className="px-2 text-right font-mono text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
     />
   );
 }
