@@ -1,139 +1,32 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useTinkoff } from '@/stores/tinkoff';
-import { usePortfolio } from '@/stores/portfolio';
 import type { Ticker } from '@/types';
-import type { TinkoffAccount } from '@/lib/tinkoff/types';
+import { useTinkoffSync } from './hooks/use-tinkoff-sync';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { formatRub } from '@/lib/format';
 
 interface Props {
   universe: Ticker[];
 }
 
-interface AccountsResponse {
-  ok: boolean;
-  accounts?: TinkoffAccount[];
-  error?: string;
-}
-
-interface PortfolioResponse {
-  ok: boolean;
-  positions?: { ticker: string; lots: number }[];
-  rawCount?: number;
-  skippedCount?: number;
-  totalValue?: { units: string; nano: number; currency: string } | null;
-  error?: string;
-}
-
 export function TinkoffSync({ universe }: Props) {
-  const { token, accountId, setToken, setAccountId, clear } = useTinkoff();
-  const { replaceAll } = usePortfolio();
-
-  const [mounted, setMounted] = useState(false);
-  const [draftToken, setDraftToken] = useState('');
-  const [accounts, setAccounts] = useState<TinkoffAccount[]>([]);
-  const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [loadingSync, setLoadingSync] = useState(false);
-  const [message, setMessage] = useState<
-    { kind: 'ok' | 'err'; text: string } | null
-  >(null);
-
-  useEffect(() => {
-    setMounted(true);
-    setDraftToken(token);
-  }, [token]);
-
-  async function loadAccounts() {
-    const t = draftToken.trim();
-    if (!t) {
-      setMessage({ kind: 'err', text: 'введи токен' });
-      return;
-    }
-
-    setLoadingAccounts(true);
-    setMessage(null);
-    try {
-      const res = await fetch('/api/tinkoff/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: t }),
-      });
-      const j = (await res.json()) as AccountsResponse;
-      if (!j.ok) {
-        setMessage({ kind: 'err', text: j.error ?? 'ошибка' });
-        return;
-      }
-      const list = j.accounts ?? [];
-      setAccounts(list);
-      setToken(t);
-      if (list.length > 0 && !list.some((a) => a.id === accountId)) {
-        setAccountId(list[0].id);
-      }
-      setMessage({ kind: 'ok', text: 'счета получены: ' + list.length });
-    } catch (e) {
-      setMessage({
-        kind: 'err',
-        text: e instanceof Error ? e.message : 'ошибка сети',
-      });
-    } finally {
-      setLoadingAccounts(false);
-    }
-  }
-
-  async function sync() {
-    const t = token.trim();
-    if (!t || !accountId) {
-      setMessage({ kind: 'err', text: 'сначала выбери счёт' });
-      return;
-    }
-
-    setLoadingSync(true);
-    setMessage(null);
-    try {
-      const allowedTickers = universe.map((u) => u.ticker);
-      const res = await fetch('/api/tinkoff/portfolio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: t, accountId, allowedTickers }),
-      });
-      const j = (await res.json()) as PortfolioResponse;
-      if (!j.ok) {
-        setMessage({ kind: 'err', text: j.error ?? 'ошибка' });
-        return;
-      }
-      const positions = j.positions ?? [];
-      replaceAll(positions);
-      setMessage({
-        kind: 'ok',
-        text:
-          'синхронизировано: ' +
-          positions.length +
-          ' позиций' +
-          (j.skippedCount && j.skippedCount > 0
-            ? ' (' + j.skippedCount + ' вне IMOEX пропущено)'
-            : ''),
-      });
-    } catch (e) {
-      setMessage({
-        kind: 'err',
-        text: e instanceof Error ? e.message : 'ошибка сети',
-      });
-    } finally {
-      setLoadingSync(false);
-    }
-  }
-
-  function reset() {
-    clear();
-    setDraftToken('');
-    setAccounts([]);
-    setMessage(null);
-  }
+  const {
+    mounted,
+    draftToken,
+    setDraftToken,
+    accounts,
+    accountId,
+    setAccountId,
+    savedToken,
+    loadingAccounts,
+    loadingSync,
+    message,
+    loadAccounts,
+    sync,
+    reset,
+  } = useTinkoffSync(universe);
 
   if (!mounted) {
     return (
@@ -153,7 +46,7 @@ export function TinkoffSync({ universe }: Props) {
       <CardHeader>
         <CardTitle className="flex items-center gap-3 flex-wrap">
           Т-Инвестиции — синхронизация портфеля
-          {token && <Badge variant="secondary">токен сохранён</Badge>}
+          {savedToken && <Badge variant="secondary">токен сохранён</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -180,7 +73,7 @@ export function TinkoffSync({ universe }: Props) {
           >
             {loadingAccounts ? 'загрузка...' : 'получить счета'}
           </Button>
-          {(token || draftToken) && (
+          {(savedToken || draftToken) && (
             <Button variant="ghost" onClick={reset}>
               сбросить
             </Button>

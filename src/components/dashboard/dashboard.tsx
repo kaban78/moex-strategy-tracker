@@ -14,7 +14,7 @@ import { DriftCard } from './drift-card';
 import { RebalanceCard } from './rebalance-card';
 import { DividendsCard } from './dividends-card';
 import { PortfolioStructureCard } from './portfolio-structure-card';
-import { TinkoffSync } from '@/components/tinkoff-sync';
+import { TinkoffSync } from '@/components/tinkoff/tinkoff-sync';
 
 interface Props {
   universe: Ticker[];
