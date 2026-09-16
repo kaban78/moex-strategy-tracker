@@ -17,6 +17,7 @@ interface PortfolioState {
   setLots: (ticker: string, lots: number) => void;
   setCash: (cash: number) => void;
   clear: () => void;
+  replaceAll: (positions: Position[]) => void;
 }
 
 export const usePortfolio = create<PortfolioState>()(
@@ -53,6 +54,8 @@ export const usePortfolio = create<PortfolioState>()(
         })),
       setCash: (cash) => set({ cash: Math.max(0, cash) }),
       clear: () => set({ positions: [], cash: 0 }),
+      replaceAll: (positions) =>
+        set({ positions: positions.map((p) => ({ ...p })) }),
     }),
     { name: 'moex-portfolio' },
   ),
