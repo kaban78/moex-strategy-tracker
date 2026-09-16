@@ -18,6 +18,7 @@ interface PortfolioState {
   setCash: (cash: number) => void;
   clear: () => void;
   replaceAll: (positions: Position[]) => void;
+  applyRebalance: (actions: { ticker: string; side: 'buy' | 'sell'; lots: number }[]) => void;
 }
 
 export const usePortfolio = create<PortfolioState>()(
@@ -56,6 +57,23 @@ export const usePortfolio = create<PortfolioState>()(
       clear: () => set({ positions: [], cash: 0 }),
       replaceAll: (positions) =>
         set({ positions: positions.map((p) => ({ ...p })) }),
+      applyRebalance: (actions) =>
+        set((s) => {
+          let next = s.positions.map((p) => ({ ...p }));
+          for (const a of actions) {
+            if (a.side === 'buy') {
+              const existing = next.find((p) => p.ticker === a.ticker);
+              if (existing) existing.lots += a.lots;
+              else next.push({ ticker: a.ticker, lots: a.lots });
+            } else {
+              const existing = next.find((p) => p.ticker === a.ticker);
+              if (!existing) continue;
+              existing.lots -= a.lots;
+            }
+          }
+          next = next.filter((p) => p.lots > 0);
+          return { positions: next };
+        }),
     }),
     { name: 'moex-portfolio' },
   ),

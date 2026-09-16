@@ -43,7 +43,10 @@ export interface BuildPortfolioResult {
 const DEFAULTS = {
   lotToTargetRatio: 2.5,
   coverageThreshold: 0.99,
-  maxHoldings: 30,
+  // Не обрезаем по количеству, только по покрытию.
+  // maxHoldings — верхняя страховка, применяется только для защиты
+  // от аномалий. Реальный размер портфеля определяется покрытием 99%.
+  maxHoldings: 60,
 } as const;
 
 /**

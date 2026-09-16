@@ -13,6 +13,7 @@ import { TargetPortfolioCard } from './target-portfolio-card';
 import { DriftCard } from './drift-card';
 import { RebalanceCard } from './rebalance-card';
 import { DividendsCard } from './dividends-card';
+import { PortfolioStructureCard } from './portfolio-structure-card';
 import { TinkoffSync } from '@/components/tinkoff-sync';
 
 interface Props {
@@ -72,6 +73,14 @@ export function Dashboard({ universe }: Props) {
     [plan.holdings, universe, portfolioValue],
   );
 
+  const allocationByTicker = useMemo(
+    () =>
+      new Map(
+        allocation.allocations.map((a) => [a.ticker, a.lots] as const),
+      ),
+    [allocation],
+  );
+
   return (
     <div className="space-y-6">
       <TinkoffSync universe={universe} />
@@ -85,6 +94,11 @@ export function Dashboard({ universe }: Props) {
         portfolioValue={portfolioValue}
         allocation={allocation}
         onTickerClick={handleTickerClick}
+      />
+
+      <PortfolioStructureCard
+        holdings={plan.holdings}
+        allocationByTicker={allocationByTicker}
       />
 
       {positions.length > 0 && (
