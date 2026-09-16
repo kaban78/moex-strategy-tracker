@@ -3,6 +3,11 @@
 
 import type { MoneyValue, TinkoffPosition } from './types';
 import type { Position } from '@/types';
+import {
+  operationKindFromRaw,
+  type TinkoffOperation,
+  type Operation,
+} from './operations-types';
 
 /**
  * MoneyValue → number. Например: {units: "10", nano: 500000000} → 10.5
@@ -57,4 +62,45 @@ export function normalizePortfolio(
     result.push({ ticker, lots });
   }
   return result;
+}
+
+
+/**
+ * Нормализует операцию из T-Invest в наш формат.
+ * Тикер ищется через карту uid → ticker. Для операций без бумаги
+ * (input/output/tax на весь счёт) ticker = null.
+ */
+export function normalizeOperation(
+  op: TinkoffOperation,
+  uidToTicker: Map<string, string>,
+): Operation {
+  const kind = operationKindFromRaw(op.type);
+
+  const lots = Number(op.quantity) || 0;
+  const price = moneyToNumber(op.price);
+  const payment = moneyToNumber(op.payment);
+
+  // Тикер: только для операций с бумагами.
+  let ticker: string | null = null;
+  if (op.instrumentUid && (kind === 'buy' || kind === 'sell' || kind === 'dividend' || kind === 'coupon')) {
+    ticker = uidToTicker.get(op.instrumentUid) ?? null;
+  }
+
+  return {
+    id: op.id,
+    date: op.date,
+    kind,
+    ticker,
+    lots: kind === 'buy' || kind === 'sell' ? lots : 0,
+    price: kind === 'buy' || kind === 'sell' ? price : 0,
+    payment,
+    rawType: op.type,
+  };
+}
+
+export function normalizeOperations(
+  ops: TinkoffOperation[],
+  uidToTicker: Map<string, string>,
+): Operation[] {
+  return ops.map((op) => normalizeOperation(op, uidToTicker));
 }
