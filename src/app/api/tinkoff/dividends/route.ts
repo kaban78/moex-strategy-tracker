@@ -3,14 +3,11 @@
 // Body: { token, tickers: string[] }
 // Response: { ok: true, dividendsByTicker: { [ticker]: TinkoffDividend[] } }
 //
-// Получает дивиденды по каждой бумаге параллельно.
-// Токен не сохраняется на сервере.
+// Получает дивиденды по каждой бумаге с ограничением параллелизма
+// (T-Invest режет на ~30 одновременных). Токен не сохраняется на сервере.
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  fetchDividends,
-  fetchSharesTickerMap,
-} from '@/lib/tinkoff/client';
+import { fetchDividends, fetchTickerMaps } from '@/lib/tinkoff/client';
 import type { TinkoffDividend } from '@/lib/tinkoff/types';
 
 export const runtime = 'nodejs';
@@ -25,6 +22,9 @@ interface ErrorItem {
   ticker: string;
   error: string;
 }
+
+const CONCURRENT = 6;
+const MAX_TICKERS = 60;
 
 export async function POST(req: NextRequest) {
   let body: Body;
@@ -49,31 +49,30 @@ export async function POST(req: NextRequest) {
   if (tickers.length === 0) {
     return NextResponse.json({ ok: true, dividendsByTicker: {} });
   }
-  if (tickers.length > 60) {
+  if (tickers.length > MAX_TICKERS) {
     return NextResponse.json(
-      { ok: false, error: 'too many tickers (max 60)' },
+      { ok: false, error: `too many tickers (max ${MAX_TICKERS})` },
       { status: 400 },
     );
   }
 
   try {
-    const tickerMap = await fetchSharesTickerMap(token);
-
-    // TS: narrowing token не работает в замыкании worker.
+    const maps = await fetchTickerMaps(token);
     const tok: string = token;
-    const CONCURRENT = 6;
-    const results: (
-      | { ticker: string; divs: TinkoffDividend[] }
-      | { ticker: string; error: string }
-    )[] = new Array(tickers.length);
 
+    type Result =
+      | { ticker: string; divs: TinkoffDividend[] }
+      | { ticker: string; error: string };
+
+    const results: Result[] = new Array(tickers.length);
     let cursor = 0;
+
     async function worker() {
       while (true) {
         const i = cursor++;
         if (i >= tickers.length) return;
         const ticker = tickers[i];
-        const uid = tickerMap.get(ticker);
+        const uid = maps.tickerToUid.get(ticker);
         if (!uid) {
           results[i] = { ticker, error: 'instrumentUid not found' };
           continue;

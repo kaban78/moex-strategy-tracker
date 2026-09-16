@@ -13,6 +13,12 @@ interface Props {
 
 const TODAY_ISO = new Date().toISOString().slice(0, 10);
 
+function shiftYears(iso: string, years: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCFullYear(d.getUTCFullYear() + years);
+  return d.toISOString().slice(0, 10);
+}
+
 const PRESETS = [
   { label: 'с 2020', start: '2020-01-01', end: TODAY_ISO },
   { label: 'с 2022', start: '2022-01-01', end: TODAY_ISO },
@@ -20,22 +26,31 @@ const PRESETS = [
   { label: 'последний год', start: shiftYears(TODAY_ISO, -1), end: TODAY_ISO },
 ] as const;
 
-function shiftYears(iso: string, years: number): string {
-  const d = new Date(iso + 'T00:00:00Z');
-  d.setUTCFullYear(d.getUTCFullYear() + years);
-  return d.toISOString().slice(0, 10);
+interface FormState {
+  startDate: string;
+  endDate: string;
+  initialCapital: string;
+  monthlyTopUp: string;
+  commissionRate: string;
 }
 
-export function BacktestForm({ onResult }: Props) {
-  const [startDate, setStartDate] = useState('2020-01-01');
-  const [endDate, setEndDate] = useState(TODAY_ISO);
-  const [initialCapital, setInitialCapital] = useState('100000');
-  const [monthlyTopUp, setMonthlyTopUp] = useState('10000');
-  const [commissionRate, setCommissionRate] = useState('0.05');
+const INITIAL_FORM: FormState = {
+  startDate: '2020-01-01',
+  endDate: TODAY_ISO,
+  initialCapital: '100000',
+  monthlyTopUp: '10000',
+  commissionRate: '0.05',
+};
 
+export function BacktestForm({ onResult }: Props) {
+  const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+
+  function update<K extends keyof FormState>(key: K, value: string): void {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
 
   async function run() {
     setError(null);
@@ -49,11 +64,11 @@ export function BacktestForm({ onResult }: Props) {
 
     try {
       const params: BacktestParams = {
-        startDate,
-        endDate,
-        initialCapital: parseInt(initialCapital, 10) || 100_000,
-        monthlyTopUp: parseInt(monthlyTopUp, 10) || 0,
-        commissionRate: (parseFloat(commissionRate) || 0) / 100,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        initialCapital: parseInt(form.initialCapital, 10) || 100_000,
+        monthlyTopUp: parseInt(form.monthlyTopUp, 10) || 0,
+        commissionRate: (parseFloat(form.commissionRate) || 0) / 100,
       };
       const res = await fetch('/api/backtest', {
         method: 'POST',
@@ -86,10 +101,9 @@ export function BacktestForm({ onResult }: Props) {
               key={p.label}
               variant="outline"
               size="sm"
-              onClick={() => {
-                setStartDate(p.start);
-                setEndDate(p.end);
-              }}
+              onClick={() =>
+                setForm((f) => ({ ...f, startDate: p.start, endDate: p.end }))
+              }
             >
               {p.label}
             </Button>
@@ -97,61 +111,45 @@ export function BacktestForm({ onResult }: Props) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-muted-foreground">От</label>
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">До</label>
-            <Input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              Стартовый капитал, ₽
-            </label>
-            <Input
-              type="number"
-              value={initialCapital}
-              onChange={(e) => setInitialCapital(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              Ежемесячное пополнение, ₽
-            </label>
-            <Input
-              type="number"
-              value={monthlyTopUp}
-              onChange={(e) => setMonthlyTopUp(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              Комиссия брокера, %
-            </label>
-            <Input
-              type="number"
-              step="0.01"
-              value={commissionRate}
-              onChange={(e) => setCommissionRate(e.target.value)}
-            />
-          </div>
+          <Field
+            label="От"
+            type="date"
+            value={form.startDate}
+            onChange={(v) => update('startDate', v)}
+          />
+          <Field
+            label="До"
+            type="date"
+            value={form.endDate}
+            onChange={(v) => update('endDate', v)}
+          />
+          <Field
+            label="Стартовый капитал, ₽"
+            type="number"
+            value={form.initialCapital}
+            onChange={(v) => update('initialCapital', v)}
+          />
+          <Field
+            label="Ежемесячное пополнение, ₽"
+            type="number"
+            value={form.monthlyTopUp}
+            onChange={(v) => update('monthlyTopUp', v)}
+          />
+          <Field
+            label="Комиссия брокера, %"
+            type="number"
+            step="0.01"
+            value={form.commissionRate}
+            onChange={(v) => update('commissionRate', v)}
+          />
         </div>
 
         <div className="flex gap-3 items-center">
           <Button onClick={run} disabled={loading}>
-            {loading ? 'считаем... ' + elapsed + 'с' : 'запустить бэктест'}
+            {loading ? `считаем... ${elapsed}с` : 'запустить бэктест'}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Первый запуск — 30–60 сек. Повторный — из кэша, мгновенно.
+            Первый запуск 5–10 мин. Повторный — из кэша, мгновенно.
           </p>
         </div>
 
@@ -162,5 +160,27 @@ export function BacktestForm({ onResult }: Props) {
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+interface FieldProps {
+  label: string;
+  type: string;
+  value: string;
+  step?: string;
+  onChange: (v: string) => void;
+}
+
+function Field({ label, type, value, step, onChange }: FieldProps) {
+  return (
+    <div>
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <Input
+        type={type}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
   );
 }

@@ -1,21 +1,11 @@
 // language: TypeScript, target: Next.js App Router API route
 // POST /api/tinkoff/portfolio
-// Body: { token: string, accountId: string }
-// Response: {
-//   ok: true,
-//   positions: Position[],           // нормализованные, только акции MOEX
-//   rawCount: number,                // сколько всего позиций было
-//   skippedCount: number,            // сколько отброшено (облигации, фонды, чужие тикеры)
-//   totalValue?: MoneyValue,
-// }
+// Body: { token, accountId, allowedTickers? }
 //
-// Проксирует запрос к T-Invest API, нормализует тикеры через Shares endpoint.
+// Проксирует T-Invest API, нормализует тикеры через Shares endpoint.
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  fetchPortfolio,
-  fetchSharesUidMap,
-} from '@/lib/tinkoff/client';
+import { fetchPortfolio, fetchTickerMaps } from '@/lib/tinkoff/client';
 import { normalizePortfolio } from '@/lib/tinkoff/parse';
 
 export const runtime = 'nodejs';
@@ -58,14 +48,14 @@ export async function POST(req: NextRequest) {
   );
 
   try {
-    const [portfolio, uidMap] = await Promise.all([
+    const [portfolio, maps] = await Promise.all([
       fetchPortfolio(token, accountId),
-      fetchSharesUidMap(token),
+      fetchTickerMaps(token),
     ]);
 
     const positions = normalizePortfolio(
       portfolio.positions,
-      uidMap,
+      maps.uidToTicker,
       allowed,
     );
 

@@ -10,22 +10,3 @@ export {
   type InstrumentShort,
 } from './instruments';
 export { post } from './http';
-
-// Совместимость со старыми вызовами.
-import { fetchTickerMaps } from './instruments';
-
-/** @deprecated Используй fetchTickerMaps().uidToTicker */
-export async function fetchSharesUidMap(
-  token: string,
-): Promise<Map<string, string>> {
-  const { uidToTicker } = await fetchTickerMaps(token);
-  return uidToTicker;
-}
-
-/** @deprecated Используй fetchTickerMaps().tickerToUid */
-export async function fetchSharesTickerMap(
-  token: string,
-): Promise<Map<string, string>> {
-  const { tickerToUid } = await fetchTickerMaps(token);
-  return tickerToUid;
-}
