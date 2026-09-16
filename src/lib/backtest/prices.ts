@@ -144,7 +144,7 @@ export async function fetchIndexPrices(
     3600,
   );
 
-  console.log(
+  if (process.env.NODE_ENV !== 'production') console.log(
     '[backtest:prices]',
     indexCode,
     'loaded:',

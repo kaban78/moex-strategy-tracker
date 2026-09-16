@@ -157,9 +157,9 @@ export async function runBacktest(
   let keyRate: Awaited<ReturnType<typeof fetchKeyRate>> = [];
   try {
     keyRate = await fetchKeyRate(params.startDate, params.endDate);
-    console.log('[backtest] key rate points:', keyRate.length);
+    if (process.env.NODE_ENV !== 'production') console.log('[backtest] key rate points:', keyRate.length);
   } catch (e) {
-    console.log('[backtest] key rate fetch failed:', e);
+    if (process.env.NODE_ENV !== 'production') console.log('[backtest] key rate fetch failed:', e);
   }
 
   let depositValue = params.initialCapital;
@@ -339,7 +339,7 @@ export async function runBacktest(
 
     // Логи раз в квартал: сравнение портфель/бенчмарк/цены.
     if (snapshots.length % 60 === 0) {
-      console.log(
+      if (process.env.NODE_ENV !== 'production') console.log(
         '[backtest]',
         date,
         '| portfolio:',
@@ -364,10 +364,10 @@ export async function runBacktest(
   const lastImoex = [...snapshots].reverse().find((s) => s.imoexPrice > 0);
   const firstMcftr = snapshots.find((s) => s.mcftrPrice > 0);
   const lastMcftr = [...snapshots].reverse().find((s) => s.mcftrPrice > 0);
-  console.log('[backtest] IMOEX first:', firstImoex?.date, firstImoex?.imoexPrice);
-  console.log('[backtest] IMOEX last:', lastImoex?.date, lastImoex?.imoexPrice);
-  console.log('[backtest] MCFTR first:', firstMcftr?.date, firstMcftr?.mcftrPrice);
-  console.log('[backtest] MCFTR last:', lastMcftr?.date, lastMcftr?.mcftrPrice);
+  if (process.env.NODE_ENV !== 'production') console.log('[backtest] IMOEX first:', firstImoex?.date, firstImoex?.imoexPrice);
+  if (process.env.NODE_ENV !== 'production') console.log('[backtest] IMOEX last:', lastImoex?.date, lastImoex?.imoexPrice);
+  if (process.env.NODE_ENV !== 'production') console.log('[backtest] MCFTR first:', firstMcftr?.date, firstMcftr?.mcftrPrice);
+  if (process.env.NODE_ENV !== 'production') console.log('[backtest] MCFTR last:', lastMcftr?.date, lastMcftr?.mcftrPrice);
 
   const metrics = computeMetrics(snapshots, params);
   return { params, snapshots, metrics };

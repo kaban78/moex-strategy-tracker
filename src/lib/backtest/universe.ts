@@ -136,7 +136,7 @@ export async function fetchUniverseOn(date: string): Promise<Ticker[]> {
     const lost = originalTickers.filter(
       (t) => !result.some((r) => r.ticker === t),
     );
-    console.log(
+    if (process.env.NODE_ENV !== 'production') console.log(
       '[universe]',
       date,
       'composition:',
