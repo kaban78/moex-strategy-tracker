@@ -2,13 +2,14 @@
 //
 // Симуляция репликации IMOEX:
 //   - Ребалансировка раз в месяц (композиция IMOEX на первое число).
-//   - Снапшот стоимости — каждый торговый день (для точной просадки).
+//   - Снапшот стоимости — каждый торговый день.
 //   - Дивиденды — прокси через разницу доходностей MCFTR и IMOEX за день.
 
-import type { Position, Ticker } from '@/types';
+import type { Ticker } from '@/types';
 import { buildPortfolio } from '@/lib/universe/select';
 import { computeDrift } from '@/lib/engine/drift';
 import { rebalance } from '@/lib/engine/rebalance';
+import { fetchKeyRate, rateOn } from '@/lib/cbr/client';
 import { getTradingDays, monthStarts } from './calendar';
 import { fetchUniverseOn } from './universe';
 import { fetchPrices, fetchIndexPrices, priceOn, priceOnSeries } from './prices';
@@ -18,59 +19,17 @@ import type {
   MonthSnapshot,
 } from './types';
 import { computeMetrics } from './metrics';
-import { fetchKeyRate, rateOn } from '@/lib/cbr/client';
+import {
+  positionsValue,
+  holdingsToPositions,
+  diffDays,
+  type Holding,
+} from './simulate-utils';
+import { dailyDividendYield } from './simulate-dividends';
 
-interface Holding {
-  ticker: string;
-  lots: number;
-}
-
-function positionsValue(
-  holdings: Holding[],
-  universe: Ticker[],
-  prices: Map<string, Map<string, number>>,
-  date: string,
-): number {
-  const lotByTicker = new Map(universe.map((t) => [t.ticker, t.lotSize]));
-  let sum = 0;
-  for (const h of holdings) {
-    const price = priceOn(prices, h.ticker, date);
-    if (price == null) continue;
-    const lotSize = lotByTicker.get(h.ticker) ?? 1;
-    sum += h.lots * lotSize * price;
-  }
-  return sum;
-}
-
-function holdingsToPositions(holdings: Holding[]): Position[] {
-  return holdings.map((h) => ({ ticker: h.ticker, lots: h.lots }));
-}
-
-function diffDays(a: string, b: string): number {
-  const da = new Date(a + 'T00:00:00Z').getTime();
-  const db = new Date(b + 'T00:00:00Z').getTime();
-  return Math.max(1, Math.round((db - da) / (24 * 3600 * 1000)));
-}
-
-/**
- * Дневная дивидендная доходность IMOEX:
- *   mcftr_ret_1d − imoex_ret_1d
- * Если отрицательная — дивидендов не было.
- */
-function dailyDividendYield(
-  dateNow: string,
-  datePrev: string,
-  imoexNow: number | null,
-  imoexPrev: number | null,
-  mcftrNow: number | null,
-  mcftrPrev: number | null,
-): number {
-  if (!imoexNow || !imoexPrev || !mcftrNow || !mcftrPrev) return 0;
-  if (imoexPrev <= 0 || mcftrPrev <= 0) return 0;
-  const imoexRet = imoexNow / imoexPrev - 1;
-  const mcftrRet = mcftrNow / mcftrPrev - 1;
-  const y = mcftrRet - imoexRet;
-  return y > 0 ? y : 0;
+const DEBUG = process.env.NODE_ENV !== 'production';
+function log(...args: unknown[]): void {
+  if (DEBUG) console.log(...args);
 }
 
 export async function runBacktest(
@@ -90,8 +49,8 @@ export async function runBacktest(
     throw new Error('не удалось построить месячные границы');
   }
 
-  // Собираем композиции индекса на каждое первое число месяца.
-  // Если ISS не отдал композицию — берём предыдущую доступную.
+  // Композиции индекса на первое число месяца.
+  // Если ISS не отдал — берём предыдущую доступную.
   const universes = new Map<string, Ticker[]>();
   const allTickers = new Set<string>();
   let lastGood: Ticker[] = [];
@@ -127,43 +86,41 @@ export async function runBacktest(
     params.endDate,
   );
 
-  // Вклад: загружаем ключевую ставку ЦБ и симулируем вклад с ежедневной
-  // капитализацией по текущей ставке.
+  // Ключевая ставка ЦБ для симуляции вклада.
   let keyRate: Awaited<ReturnType<typeof fetchKeyRate>> = [];
   try {
     keyRate = await fetchKeyRate(params.startDate, params.endDate);
-    if (process.env.NODE_ENV !== 'production') console.log('[backtest] key rate points:', keyRate.length);
+    log('[backtest] key rate points:', keyRate.length);
   } catch (e) {
-    if (process.env.NODE_ENV !== 'production') console.log('[backtest] key rate fetch failed:', e);
+    log('[backtest] key rate fetch failed:', e);
   }
 
+  // Состояние портфеля.
+  let holdings: Holding[] = [];
+  let cash = params.initialCapital;
+  let invested = params.initialCapital;
+  let currentOmission = 0;
+
+  // Бенчмарки: IMOEX (без дивидендов) и MCFTR (с дивидендами).
+  let imoexLots = 0;
+  let imoexCash = params.initialCapital;
+  let mcftrLots = 0;
+  let mcftrCash = params.initialCapital;
+
+  // Вклад под ключевую ставку ЦБ.
   let depositValue = params.initialCapital;
 
-  // Указатель на текущий «рабочий» состав для дней между ребалансировками.
   const monthStartSet = new Set(monthStartDates);
   let currentUniverse: Ticker[] = universes.get(monthStartDates[0]) ?? [];
   const lotByTicker = new Map(
     currentUniverse.map((t) => [t.ticker, t.lotSize]),
   );
 
-  let holdings: Holding[] = [];
-  let cash = params.initialCapital;
-  let invested = params.initialCapital;
-  let currentOmission = 0;
-
-  let imoexLots = 0;
-  let imoexCash = params.initialCapital;
-  let mcftrLots = 0;
-  let mcftrCash = params.initialCapital;
-
-  // Для первого дня купим бенчмарки целиком.
   let benchmarkInitialized = false;
-
   const snapshots: MonthSnapshot[] = [];
   let prevDate: string | null = null;
 
   for (const date of calendar) {
-    // Только дни в диапазоне [startDate, endDate].
     if (date < params.startDate || date > params.endDate) continue;
 
     // Смена месяца — ребалансировка.
@@ -174,7 +131,7 @@ export async function runBacktest(
         lotByTicker.clear();
         for (const t of u) lotByTicker.set(t.ticker, t.lotSize);
 
-        // Пополнение в начале месяца (кроме самого первого дня).
+        // Пополнение в начале месяца (кроме первого дня).
         if (prevDate !== null) {
           cash += params.monthlyTopUp;
           invested += params.monthlyTopUp;
@@ -182,7 +139,6 @@ export async function runBacktest(
           mcftrCash += params.monthlyTopUp;
         }
 
-        // Целевой портфель и ребалансировка.
         const totalValue =
           positionsValue(holdings, currentUniverse, prices, date) + cash;
 
@@ -239,7 +195,7 @@ export async function runBacktest(
       }
     }
 
-    // Бенчмарк: покупаем IMOEX и MCFTR в первый день.
+    // Бенчмарки: покупаем в первый день.
     if (!benchmarkInitialized) {
       const ip = priceOnSeries(imoexPrices, date);
       if (ip && ip > 0 && imoexCash > 0) {
@@ -256,22 +212,18 @@ export async function runBacktest(
       benchmarkInitialized = true;
     }
 
-    // Дивиденды — прокси: разница дневной доходности MCFTR и IMOEX.
+    // Дивиденды — прокси разницы MCFTR и IMOEX.
     if (prevDate) {
       const dayGap = diffDays(prevDate, date);
-      const yield1d = dailyDividendYield(
-        date,
-        prevDate,
+      const y = dailyDividendYield(
         priceOnSeries(imoexPrices, date),
         priceOnSeries(imoexPrices, prevDate),
         priceOnSeries(mcftrPrices, date),
         priceOnSeries(mcftrPrices, prevDate),
       );
-      // Умножаем на gap: если между точками выходные, берём пропорцию.
-      // Но в календаре только торговые дни, gap=1 почти всегда.
-      if (yield1d > 0 && dayGap === 1) {
+      if (y > 0 && dayGap === 1) {
         const posVal = positionsValue(holdings, currentUniverse, prices, date);
-        cash += posVal * yield1d;
+        cash += posVal * y;
       }
     }
 
@@ -284,7 +236,6 @@ export async function runBacktest(
         depositValue *= Math.pow(1 + dailyRate, gap);
       }
     }
-    // Пополнение вклада в начале месяца.
     if (monthStartSet.has(date) && prevDate !== null) {
       depositValue += params.monthlyTopUp;
     }
@@ -312,9 +263,9 @@ export async function runBacktest(
       omissionWeight: currentOmission,
     });
 
-    // Логи раз в квартал: сравнение портфель/бенчмарк/цены.
+    // Логи раз в квартал.
     if (snapshots.length % 60 === 0) {
-      if (process.env.NODE_ENV !== 'production') console.log(
+      log(
         '[backtest]',
         date,
         '| portfolio:',
@@ -323,10 +274,6 @@ export async function runBacktest(
         imoexValue.toFixed(0),
         '| MCFTR sim:',
         mcftrValue.toFixed(0),
-        '| imoexPrice:',
-        imoexPrice ?? 'null',
-        '| mcftrPrice:',
-        mcftrPrice ?? 'null',
         '| positions:',
         holdings.length,
       );
@@ -334,15 +281,6 @@ export async function runBacktest(
 
     prevDate = date;
   }
-
-  const firstImoex = snapshots.find((s) => s.imoexPrice > 0);
-  const lastImoex = [...snapshots].reverse().find((s) => s.imoexPrice > 0);
-  const firstMcftr = snapshots.find((s) => s.mcftrPrice > 0);
-  const lastMcftr = [...snapshots].reverse().find((s) => s.mcftrPrice > 0);
-  if (process.env.NODE_ENV !== 'production') console.log('[backtest] IMOEX first:', firstImoex?.date, firstImoex?.imoexPrice);
-  if (process.env.NODE_ENV !== 'production') console.log('[backtest] IMOEX last:', lastImoex?.date, lastImoex?.imoexPrice);
-  if (process.env.NODE_ENV !== 'production') console.log('[backtest] MCFTR first:', firstMcftr?.date, firstMcftr?.mcftrPrice);
-  if (process.env.NODE_ENV !== 'production') console.log('[backtest] MCFTR last:', lastMcftr?.date, lastMcftr?.mcftrPrice);
 
   const metrics = computeMetrics(snapshots, params);
   return { params, snapshots, metrics };
