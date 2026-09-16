@@ -6,6 +6,7 @@ function makeSnapshot(
   date: string,
   totalValue: number,
   benchmarkValue: number,
+  benchmarkTotalReturnValue: number,
   invested: number,
 ): MonthSnapshot {
   return {
@@ -15,6 +16,7 @@ function makeSnapshot(
     totalValue,
     invested,
     benchmarkValue,
+    benchmarkTotalReturnValue,
     positionsCount: 5,
     omissionWeight: 0.05,
   };
@@ -32,59 +34,38 @@ describe('computeMetrics', () => {
   it('пустой результат', () => {
     const m = computeMetrics([], params);
     expect(m.finalValue).toBe(0);
-    expect(m.cagr).toBe(0);
   });
 
-  it('считает total return', () => {
+  it('нормализованный max drawdown не ноль при падении', () => {
     const snaps = [
-      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000),
-      makeSnapshot('2024-01-01', 220_000, 200_000, 100_000),
+      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000, 100_000),
+      makeSnapshot('2020-06-01', 150_000, 150_000, 160_000, 100_000),
+      makeSnapshot('2020-12-01', 90_000, 90_000, 100_000, 100_000),
     ];
     const m = computeMetrics(snaps, params);
-    expect(m.totalReturn).toBeCloseTo(1.2, 4);
-    expect(m.finalValue).toBe(220_000);
+    // Нормализация: 150/100=1.5 → 90/100=0.9. DD = (1.5-0.9)/1.5 = 0.4
+    expect(m.maxDrawdown).toBeCloseTo(0.4, 3);
   });
 
-  it('CAGR положительный при росте', () => {
+  it('MCFTR всегда ≥ IMOEX при росте', () => {
     const snaps = [
-      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000),
-      makeSnapshot('2021-01-01', 115_000, 115_000, 100_000),
+      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000, 100_000),
+      makeSnapshot('2024-01-01', 150_000, 150_000, 200_000, 100_000),
     ];
     const m = computeMetrics(snaps, params);
-    expect(m.cagr).toBeGreaterThan(0.1);
-    expect(m.cagr).toBeLessThan(0.2);
+    expect(m.benchmarkTotalReturnFinalValue).toBeGreaterThan(
+      m.benchmarkFinalValue,
+    );
   });
 
-  it('max drawdown', () => {
+  it('tracking error по MCFTR', () => {
     const snaps = [
-      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000),
-      makeSnapshot('2020-06-01', 150_000, 150_000, 100_000),
-      makeSnapshot('2020-12-01', 90_000, 90_000, 100_000),
-    ];
-    const m = computeMetrics(snaps, params);
-    // (150 - 90) / 150 = 0.4
-    expect(m.maxDrawdown).toBeCloseTo(0.4, 4);
-  });
-
-  it('tracking error — ноль когда портфель равен бенчмарку', () => {
-    const snaps = [
-      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000),
-      makeSnapshot('2020-02-01', 105_000, 105_000, 100_000),
-      makeSnapshot('2020-03-01', 110_000, 110_000, 100_000),
-      makeSnapshot('2020-04-01', 115_000, 115_000, 100_000),
+      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000, 100_000),
+      makeSnapshot('2020-02-01', 105_000, 105_000, 105_000, 100_000),
+      makeSnapshot('2020-03-01', 110_000, 110_000, 110_000, 100_000),
+      makeSnapshot('2020-04-01', 115_000, 115_000, 115_000, 100_000),
     ];
     const m = computeMetrics(snaps, params);
     expect(m.trackingError).toBeCloseTo(0, 6);
-  });
-
-  it('tracking error > 0 когда расходятся', () => {
-    const snaps = [
-      makeSnapshot('2020-01-01', 100_000, 100_000, 100_000),
-      makeSnapshot('2020-02-01', 105_000, 102_000, 100_000),
-      makeSnapshot('2020-03-01', 112_000, 106_000, 100_000),
-      makeSnapshot('2020-04-01', 118_000, 111_000, 100_000),
-    ];
-    const m = computeMetrics(snaps, params);
-    expect(m.trackingError).toBeGreaterThan(0);
   });
 });

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/table';
 import { formatRub } from '@/lib/format';
 import { DISCLAIMER_SHORT_RU } from '@/lib/legal/disclaimers';
+import { usePortfolio } from '@/stores/portfolio';
 
 interface Props {
   rebalancePlan: RebalanceResult;
@@ -22,6 +23,7 @@ interface Props {
 
 export function RebalanceCard({ rebalancePlan, onTickerClick }: Props) {
   const { actions, buyValue, sellValue, cashLeft } = rebalancePlan;
+  const { applyRebalance } = usePortfolio();
 
   if (actions.length === 0) return null;
 
@@ -78,6 +80,15 @@ export function RebalanceCard({ rebalancePlan, onTickerClick }: Props) {
           {DISCLAIMER_SHORT_RU} Это справочная арифметика для выбранной
           стратегии. Решение о сделках принимаете вы.
         </p>
+        <div className="mt-3 pt-3 border-t flex justify-end">
+          <button
+            type="button"
+            onClick={() => applyRebalance(actions)}
+            className="text-xs px-3 py-1.5 rounded-md border bg-background hover:bg-muted transition-colors"
+          >
+            применить к портфелю
+          </button>
+        </div>
       </CardContent>
     </Card>
   );

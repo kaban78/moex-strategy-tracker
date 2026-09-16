@@ -1,10 +1,4 @@
 // language: TypeScript, target: historical prices for backtest
-// Загрузка исторических цен закрытия по набору тикеров.
-//
-// Один запрос на тикер. Параллельно, с лимитом одновременных запросов —
-// чтобы не завалить MOEX ISS.
-//
-// Кэш в памяти процесса: один и тот же тикер не тянется дважды.
 
 import { parseIssTable, type IssTable } from '@/lib/moex/parse';
 
@@ -22,8 +16,8 @@ interface HistoryRow {
   CLOSE: number;
 }
 
-/** ticker → { date → close }. Кэш на процесс. */
 const priceCache = new Map<string, Map<string, number>>();
+const indexPriceCache = new Map<string, Map<string, number>>();
 
 async function fetchTickerPricesFromIss(
   ticker: string,
@@ -81,10 +75,6 @@ async function fetchWithThrottle<T>(
   return results;
 }
 
-/**
- * Загружает цены закрытия по всем тикерам за диапазон [from, till].
- * Возвращает Map<ticker, Map<date, close>>.
- */
 export async function fetchPrices(
   tickers: string[],
   from: string,
@@ -96,11 +86,8 @@ export async function fetchPrices(
   const toLoad: string[] = [];
   for (const t of unique) {
     const cached = priceCache.get(t);
-    if (cached) {
-      result.set(t, cached);
-    } else {
-      toLoad.push(t);
-    }
+    if (cached) result.set(t, cached);
+    else toLoad.push(t);
   }
 
   if (toLoad.length > 0) {
@@ -117,11 +104,46 @@ export async function fetchPrices(
 }
 
 /**
- * Цена тикера на дату. Если в дату нет свечи — берём ближайшую
- * предыдущую (последняя торговая сессия ≤ date).
- *
- * Возвращает null если тикер не торговался до этой даты вообще.
+ * Цены индекса (IMOEX, MCFTR и т.д.) за диапазон.
  */
+export async function fetchIndexPrices(
+  indexCode: string,
+  from: string,
+  till: string,
+): Promise<Map<string, number>> {
+  const key = `${indexCode}|${from}|${till}`;
+  const cached = indexPriceCache.get(key);
+  if (cached) return cached;
+
+  const url = new URL(
+    `${ISS_BASE}/history/engines/stock/markets/index/securities/${encodeURIComponent(indexCode)}.json`,
+  );
+  url.searchParams.set('from', from);
+  url.searchParams.set('till', till);
+  url.searchParams.set('history.columns', 'TRADEDATE,CLOSE');
+  url.searchParams.set('iss.meta', 'off');
+
+  const res = await fetch(url.toString(), {
+    headers: { 'User-Agent': USER_AGENT },
+    next: { revalidate: 3600 },
+  });
+  if (!res.ok) {
+    throw new Error(`MOEX ${indexCode} history → HTTP ${res.status}`);
+  }
+
+  const json = (await res.json()) as IssJson;
+  const rows = parseIssTable<HistoryRow>(json.history);
+
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (typeof r.CLOSE === 'number' && r.CLOSE > 0 && r.TRADEDATE) {
+      map.set(r.TRADEDATE, r.CLOSE);
+    }
+  }
+  indexPriceCache.set(key, map);
+  return map;
+}
+
 export function priceOn(
   prices: Map<string, Map<string, number>>,
   ticker: string,
@@ -130,11 +152,8 @@ export function priceOn(
   const series = prices.get(ticker);
   if (!series) return null;
 
-  if (series.has(date)) {
-    return series.get(date) ?? null;
-  }
+  if (series.has(date)) return series.get(date) ?? null;
 
-  // Бинарный поиск ближайшей предыдущей даты.
   const dates = Array.from(series.keys()).sort();
   if (dates.length === 0) return null;
   if (date < dates[0]) return null;
@@ -152,59 +171,4 @@ export function priceOn(
     }
   }
   return best ? (series.get(best) ?? null) : null;
-}
-
-
-/**
- * Цены закрытия IMOEX за диапазон. Отдельный эндпоинт —
- * индексы не торгуются на TQBR, у них свой путь.
- */
-async function fetchIndexPricesFromIss(
-  from: string,
-  till: string,
-): Promise<Map<string, number>> {
-  const url = new URL(
-    `${ISS_BASE}/history/engines/stock/markets/index/securities/IMOEX.json`,
-  );
-  url.searchParams.set('from', from);
-  url.searchParams.set('till', till);
-  url.searchParams.set('history.columns', 'TRADEDATE,CLOSE');
-  url.searchParams.set('iss.meta', 'off');
-
-  const res = await fetch(url.toString(), {
-    headers: { 'User-Agent': USER_AGENT },
-    next: { revalidate: 3600 },
-  });
-  if (!res.ok) {
-    throw new Error(`MOEX IMOEX history → HTTP ${res.status}`);
-  }
-
-  const json = (await res.json()) as IssJson;
-  const rows = parseIssTable<HistoryRow>(json.history);
-
-  const map = new Map<string, number>();
-  for (const r of rows) {
-    if (typeof r.CLOSE === 'number' && r.CLOSE > 0 && r.TRADEDATE) {
-      map.set(r.TRADEDATE, r.CLOSE);
-    }
-  }
-  return map;
-}
-
-const indexCache = new Map<string, Map<string, number>>();
-
-/**
- * Цены IMOEX. Кэширует по ключу from|till, как fetchPrices.
- */
-export async function fetchIndexPrices(
-  from: string,
-  till: string,
-): Promise<Map<string, number>> {
-  const key = `${from}|${till}`;
-  const cached = indexCache.get(key);
-  if (cached) return cached;
-
-  const data = await fetchIndexPricesFromIss(from, till);
-  indexCache.set(key, data);
-  return data;
 }

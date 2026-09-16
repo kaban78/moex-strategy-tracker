@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import Link from 'next/link';
 import type { Ticker } from '@/types';
 import { buildPortfolio } from '@/lib/universe/select';
 import { computeDrift } from '@/lib/engine/drift';

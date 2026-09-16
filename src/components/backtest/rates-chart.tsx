@@ -10,20 +10,20 @@ import {
   type LineData,
   type Time,
 } from 'lightweight-charts';
-import type { MonthSnapshot } from '@/lib/backtest/types';
-import { formatRub } from '@/lib/format';
+import type { RatePoint } from '@/lib/cbr/client';
 
 interface Props {
-  snapshots: MonthSnapshot[];
+  keyRate: RatePoint[];
+  depositRate: RatePoint[];
 }
 
-export function BacktestChart({ snapshots }: Props) {
+export function RatesChart({ keyRate, depositRate }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || snapshots.length === 0) return;
+    if (!host || (keyRate.length === 0 && depositRate.length === 0)) return;
 
     let raf = 0;
     const init = () => {
@@ -62,51 +62,29 @@ export function BacktestChart({ snapshots }: Props) {
           fixRightEdge: true,
         },
         localization: {
-          priceFormatter: (p: number) => formatRub(p),
+          priceFormatter: (p: number) => p.toFixed(2) + '%',
         },
       });
 
-      const investedSeries = chart.addSeries(LineSeries, {
-        color: '#737373',
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        title: 'Вложено',
-      });
-
-      const imoexSeries = chart.addSeries(LineSeries, {
-        color: '#3b82f6',
-        lineWidth: 1,
-        priceLineVisible: false,
-        title: 'IMOEX',
-      });
-
-      const mcftrSeries = chart.addSeries(LineSeries, {
-        color: '#8b5cf6',
-        lineWidth: 1,
-        priceLineVisible: false,
-        title: 'MCFTR',
-      });
-
-      const portfolioSeries = chart.addSeries(LineSeries, {
-        color: '#22c55e',
+      const keySeries = chart.addSeries(LineSeries, {
+        color: '#ef4444',
         lineWidth: 2,
         priceLineVisible: false,
-        title: 'Портфель',
+        title: 'Ключевая ставка',
       });
 
-      investedSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.invested })),
+      const depSeries = chart.addSeries(LineSeries, {
+        color: '#3b82f6',
+        lineWidth: 2,
+        priceLineVisible: false,
+        title: 'Вклады топ-10',
+      });
+
+      keySeries.setData(
+        keyRate.map((p) => ({ time: p.date as Time, value: p.value })),
       );
-      imoexSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.benchmarkValue })),
-      );
-      mcftrSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.benchmarkTotalReturnValue })),
-      );
-      portfolioSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.totalValue })),
+      depSeries.setData(
+        depositRate.map((p) => ({ time: p.date as Time, value: p.value })),
       );
 
       chart.timeScale().fitContent();
@@ -122,9 +100,15 @@ export function BacktestChart({ snapshots }: Props) {
         chartRef.current = null;
       }
     };
-  }, [snapshots]);
+  }, [keyRate, depositRate]);
 
-  if (snapshots.length === 0) return null;
+  if (keyRate.length === 0 && depositRate.length === 0) {
+    return (
+      <div className="w-full h-[260px] flex items-center justify-center text-sm text-muted-foreground">
+        нет данных по ставкам
+      </div>
+    );
+  }
 
-  return <div ref={hostRef} className="w-full h-[440px]" />;
+  return <div ref={hostRef} className="w-full h-[260px]" />;
 }

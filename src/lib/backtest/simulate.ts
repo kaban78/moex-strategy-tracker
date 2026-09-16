@@ -1,17 +1,10 @@
 // language: TypeScript, target: backtest simulation loop
-// Симуляция портфеля, повторяющего IMOEX, с ежемесячной ребалансировкой.
-//
-// Это информационный инструмент. Не является инвестиционной рекомендацией.
-// См. src/lib/legal/disclaimers.ts.
 
 import type { Position, Ticker } from '@/types';
 import { buildPortfolio } from '@/lib/universe/select';
 import { computeDrift } from '@/lib/engine/drift';
 import { rebalance } from '@/lib/engine/rebalance';
-import {
-  getTradingDays,
-  monthStarts,
-} from './calendar';
+import { getTradingDays, monthStarts } from './calendar';
 import { fetchUniverseOn } from './universe';
 import { fetchPrices, fetchIndexPrices, priceOn } from './prices';
 import type {
@@ -48,15 +41,34 @@ function holdingsToPositions(holdings: Holding[]): Position[] {
 }
 
 /**
- * Главный цикл бэктеста. На каждой месячной точке:
- *   1. Получаем состав IMOEX на дату.
- *   2. Считаем текущую стоимость портфеля.
- *   3. Добавляем пополнение.
- *   4. Считаем целевые веса через buildPortfolio.
- *   5. Через rebalance получаем список операций.
- *   6. Выполняем операции с комиссией.
- *   7. Сохраняем снапшот.
+ * Цена на дату из плоского ряда { date → price }.
+ * Ближайшее предыдущее значение.
  */
+function priceOnSeries(
+  series: Map<string, number>,
+  date: string,
+): number | null {
+  if (series.size === 0) return null;
+  if (series.has(date)) return series.get(date) ?? null;
+
+  const dates = Array.from(series.keys()).sort();
+  if (date < dates[0]) return null;
+
+  let lo = 0;
+  let hi = dates.length - 1;
+  let best: string | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (dates[mid] <= date) {
+      best = dates[mid];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best ? (series.get(best) ?? null) : null;
+}
+
 export async function runBacktest(
   params: BacktestParams,
 ): Promise<BacktestResult> {
@@ -66,7 +78,6 @@ export async function runBacktest(
     throw new Error('нет торговых дней в указанном периоде');
   }
 
-  // Собираем состав на каждую месячную дату и объединяем тикеры.
   const universes = new Map<string, Ticker[]>();
   const allTickers = new Set<string>();
   for (const d of days) {
@@ -75,30 +86,27 @@ export async function runBacktest(
     for (const t of u) allTickers.add(t.ticker);
   }
 
-  // Все цены за период — один раз.
   const prices = await fetchPrices(
     Array.from(allTickers),
     params.startDate,
     params.endDate,
   );
 
-  // Цены IMOEX — отдельный эндпоинт, кладём в ту же карту под ключом IMOEX.
-  const imoexPrices = await fetchIndexPrices(
-    params.startDate,
-    params.endDate,
-  );
-  prices.set('IMOEX', imoexPrices);
+  // Два бенчмарка: IMOEX (ценовой) и MCFTR (полной доходности).
+  const imoexPrices = await fetchIndexPrices('IMOEX', params.startDate, params.endDate);
+  const mcftrPrices = await fetchIndexPrices('MCFTR', params.startDate, params.endDate);
 
   let holdings: Holding[] = [];
   let cash = params.initialCapital;
   let invested = params.initialCapital;
 
-  // Бенчмарк: та же сумма в IMOEX, покупаем на первой дате.
-  let benchmarkLots = 0;
-  let benchmarkCash = params.initialCapital;
-  const firstDate = days[0];
-  const firstUniverse = universes.get(firstDate) ?? [];
-  const firstPrice = priceOn(prices, 'IMOEX', firstDate);
+  // Бенчмарк 1 — IMOEX (без дивидендов).
+  let imoexLots = 0;
+  let imoexCash = params.initialCapital;
+
+  // Бенчмарк 2 — MCFTR (с дивидендами).
+  let mcftrLots = 0;
+  let mcftrCash = params.initialCapital;
 
   const snapshots: MonthSnapshot[] = [];
 
@@ -107,21 +115,18 @@ export async function runBacktest(
     const universe = universes.get(date) ?? [];
     if (universe.length === 0) continue;
 
-    // Пополнение (кроме первого месяца — там стартовый капитал).
     if (i > 0) {
       cash += params.monthlyTopUp;
       invested += params.monthlyTopUp;
-      benchmarkCash += params.monthlyTopUp;
+      imoexCash += params.monthlyTopUp;
+      mcftrCash += params.monthlyTopUp;
     }
 
-    // Текущая стоимость.
     const posValue = positionsValue(holdings, universe, prices, date);
     const totalValue = posValue + cash;
 
-    // Целевой портфель.
     const plan = buildPortfolio(universe, { portfolioValue: totalValue });
 
-    // Drift текущих позиций vs целевых.
     const drift = computeDrift({
       positions: holdingsToPositions(holdings),
       universe,
@@ -129,14 +134,8 @@ export async function runBacktest(
       cash,
     });
 
-    // Ребалансировка.
-    const rb = rebalance({
-      drifts: drift.drifts,
-      universe,
-      cash,
-    });
+    const rb = rebalance({ drifts: drift.drifts, universe, cash });
 
-    // Выполняем операции с учётом комиссии.
     const lotByTicker = new Map(universe.map((t) => [t.ticker, t.lotSize]));
     for (const action of rb.actions) {
       const price = priceOn(prices, action.ticker, date);
@@ -166,22 +165,28 @@ export async function runBacktest(
       }
     }
 
-    // Убираем нулевые позиции.
     holdings = holdings.filter((h) => h.lots > 0);
 
-    // Бенчмарк: покупаем IMOEX по цене на дату.
-    const imoexPrice =
-      priceOn(prices, 'IMOEX', date) ?? firstPrice ?? null;
-    if (imoexPrice && imoexPrice > 0 && benchmarkCash > 0) {
-      const lots = Math.floor(benchmarkCash / imoexPrice);
-      benchmarkLots += lots;
-      benchmarkCash -= lots * imoexPrice;
+    // IMOEX без дивидендов.
+    const imoexPrice = priceOnSeries(imoexPrices, date);
+    if (imoexPrice && imoexPrice > 0 && imoexCash > 0) {
+      const lots = Math.floor(imoexCash / imoexPrice);
+      imoexLots += lots;
+      imoexCash -= lots * imoexPrice;
+    }
+
+    // MCFTR с дивидендами.
+    const mcftrPrice = priceOnSeries(mcftrPrices, date);
+    if (mcftrPrice && mcftrPrice > 0 && mcftrCash > 0) {
+      const lots = Math.floor(mcftrCash / mcftrPrice);
+      mcftrLots += lots;
+      mcftrCash -= lots * mcftrPrice;
     }
 
     const newPosValue = positionsValue(holdings, universe, prices, date);
     const newTotal = newPosValue + cash;
-    const benchmarkValue =
-      benchmarkLots * (imoexPrice ?? 0) + benchmarkCash;
+    const imoexValue = imoexLots * (imoexPrice ?? 0) + imoexCash;
+    const mcftrValue = mcftrLots * (mcftrPrice ?? 0) + mcftrCash;
 
     snapshots.push({
       date,
@@ -189,13 +194,13 @@ export async function runBacktest(
       cash,
       totalValue: newTotal,
       invested,
-      benchmarkValue,
+      benchmarkValue: imoexValue,
+      benchmarkTotalReturnValue: mcftrValue,
       positionsCount: holdings.length,
       omissionWeight: plan.omissionWeight,
     });
   }
 
   const metrics = computeMetrics(snapshots, params);
-
   return { params, snapshots, metrics };
 }

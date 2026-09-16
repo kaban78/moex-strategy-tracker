@@ -1,5 +1,4 @@
 // language: TypeScript, target: backtest metrics
-// Метрики бэктеста: CAGR, max drawdown, tracking error.
 
 import type {
   BacktestParams,
@@ -13,10 +12,6 @@ function daysBetween(a: string, b: string): number {
   return Math.max(1, Math.round((db - da) / (24 * 3600 * 1000)));
 }
 
-/**
- * CAGR: годовая доходность на вложенный капитал.
- * Учитывает пополнения через денежно-взвешенную аппроксимацию.
- */
 function cagr(
   firstDate: string,
   lastDate: string,
@@ -29,47 +24,59 @@ function cagr(
   return Math.pow(finalValue / totalInvested, 1 / years) - 1;
 }
 
-function maxDrawdown(snapshots: MonthSnapshot[]): number {
-  let peak = 0;
-  let maxDd = 0;
-  for (const s of snapshots) {
-    if (s.totalValue > peak) peak = s.totalValue;
-    if (peak > 0) {
-      const dd = (peak - s.totalValue) / peak;
-      if (dd > maxDd) maxDd = dd;
-    }
-  }
-  return maxDd;
-}
-
-function benchmarkMaxDrawdown(snapshots: MonthSnapshot[]): number {
-  let peak = 0;
-  let maxDd = 0;
-  for (const s of snapshots) {
-    if (s.benchmarkValue > peak) peak = s.benchmarkValue;
-    if (peak > 0) {
-      const dd = (peak - s.benchmarkValue) / peak;
-      if (dd > maxDd) maxDd = dd;
-    }
-  }
-  return maxDd;
-}
-
 /**
- * Tracking error: стандартное отклонение разности месячных доходностей
- * портфеля и бенчмарка, приведённое к годовым.
+ * Max drawdown на нормализованной кривой.
+ * Нормализация — totalValue / invested. Так пополнения не маскируют
+ * просадки: если портфель упал на 30% относительно вложенного,
+ * drawdown будет 0.30, а не 0.
  */
-function trackingError(snapshots: MonthSnapshot[]): number {
+function maxDrawdownNormalized(snapshots: MonthSnapshot[]): number {
+  let peak = 0;
+  let maxDd = 0;
+  for (const s of snapshots) {
+    if (s.invested <= 0) continue;
+    const norm = s.totalValue / s.invested;
+    if (norm > peak) peak = norm;
+    if (peak > 0) {
+      const dd = (peak - norm) / peak;
+      if (dd > maxDd) maxDd = dd;
+    }
+  }
+  return maxDd;
+}
+
+function maxDrawdownNormalizedBenchmark(
+  snapshots: MonthSnapshot[],
+  key: 'benchmarkValue' | 'benchmarkTotalReturnValue',
+): number {
+  let peak = 0;
+  let maxDd = 0;
+  for (const s of snapshots) {
+    if (s.invested <= 0) continue;
+    const norm = s[key] / s.invested;
+    if (norm > peak) peak = norm;
+    if (peak > 0) {
+      const dd = (peak - norm) / peak;
+      if (dd > maxDd) maxDd = dd;
+    }
+  }
+  return maxDd;
+}
+
+function trackingError(
+  snapshots: MonthSnapshot[],
+  benchmarkKey: 'benchmarkValue' | 'benchmarkTotalReturnValue',
+): number {
   if (snapshots.length < 3) return 0;
 
   const diffs: number[] = [];
   for (let i = 1; i < snapshots.length; i++) {
     const prev = snapshots[i - 1];
     const cur = snapshots[i];
-    if (prev.totalValue <= 0 || prev.benchmarkValue <= 0) continue;
+    if (prev.totalValue <= 0 || prev[benchmarkKey] <= 0) continue;
 
     const portRet = cur.totalValue / prev.totalValue - 1;
-    const benchRet = cur.benchmarkValue / prev.benchmarkValue - 1;
+    const benchRet = cur[benchmarkKey] / prev[benchmarkKey] - 1;
     diffs.push(portRet - benchRet);
   }
 
@@ -77,13 +84,12 @@ function trackingError(snapshots: MonthSnapshot[]): number {
   const mean = diffs.reduce((s, d) => s + d, 0) / diffs.length;
   const variance =
     diffs.reduce((s, d) => s + (d - mean) ** 2, 0) / (diffs.length - 1);
-  const monthlyStd = Math.sqrt(variance);
-  return monthlyStd * Math.sqrt(12);
+  return Math.sqrt(variance) * Math.sqrt(12);
 }
 
 export function computeMetrics(
   snapshots: MonthSnapshot[],
-  params: BacktestParams,
+  _params: BacktestParams,
 ): BacktestMetrics {
   if (snapshots.length === 0) {
     return {
@@ -96,6 +102,9 @@ export function computeMetrics(
       benchmarkFinalValue: 0,
       benchmarkCagr: 0,
       benchmarkMaxDrawdown: 0,
+      benchmarkTotalReturnFinalValue: 0,
+      benchmarkTotalReturnCagr: 0,
+      benchmarkTotalReturnMaxDrawdown: 0,
     };
   }
 
@@ -103,7 +112,8 @@ export function computeMetrics(
   const last = snapshots[snapshots.length - 1];
   const totalInvested = last.invested;
   const finalValue = last.totalValue;
-  const benchmarkFinalValue = last.benchmarkValue;
+  const bFinal = last.benchmarkValue;
+  const btrFinal = last.benchmarkTotalReturnValue;
 
   const totalReturn =
     totalInvested > 0 ? (finalValue - totalInvested) / totalInvested : 0;
@@ -113,15 +123,24 @@ export function computeMetrics(
     totalInvested,
     totalReturn,
     cagr: cagr(first.date, last.date, totalInvested, finalValue),
-    maxDrawdown: maxDrawdown(snapshots),
-    trackingError: trackingError(snapshots),
-    benchmarkFinalValue,
-    benchmarkCagr: cagr(
+    maxDrawdown: maxDrawdownNormalized(snapshots),
+    trackingError: trackingError(snapshots, 'benchmarkTotalReturnValue'),
+    benchmarkFinalValue: bFinal,
+    benchmarkCagr: cagr(first.date, last.date, totalInvested, bFinal),
+    benchmarkMaxDrawdown: maxDrawdownNormalizedBenchmark(
+      snapshots,
+      'benchmarkValue',
+    ),
+    benchmarkTotalReturnFinalValue: btrFinal,
+    benchmarkTotalReturnCagr: cagr(
       first.date,
       last.date,
       totalInvested,
-      benchmarkFinalValue,
+      btrFinal,
     ),
-    benchmarkMaxDrawdown: benchmarkMaxDrawdown(snapshots),
+    benchmarkTotalReturnMaxDrawdown: maxDrawdownNormalizedBenchmark(
+      snapshots,
+      'benchmarkTotalReturnValue',
+    ),
   };
 }
