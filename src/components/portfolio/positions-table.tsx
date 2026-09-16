@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Position } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,10 +33,10 @@ export function PositionsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Тикер</TableHead>
-          <TableHead className="text-right">Лотов</TableHead>
+          <TableHead className="text-right w-24">Лотов</TableHead>
           <TableHead className="text-right">Лот, ₽</TableHead>
           <TableHead className="text-right">Стоимость</TableHead>
-          <TableHead className="w-10"></TableHead>
+          <TableHead className="w-10" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -78,40 +78,44 @@ interface LotsInputProps {
 }
 
 function LotsInput({ value, onCommit }: LotsInputProps) {
-  const [draft, setDraft] = useState<string>(() => String(value));
-  const [focused, setFocused] = useState(false);
+  // Защита от undefined/NaN — иначе type=number покажет пустоту.
+  const safe = Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
+
+  const [draft, setDraft] = useState(String(safe));
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!focused) setDraft(String(value));
-  }, [value, focused]);
+    if (document.activeElement !== inputRef.current) {
+      setDraft(String(safe));
+    }
+  }, [safe]);
 
   function commit() {
-    setFocused(false);
     const n = parseInt(draft, 10);
     if (!Number.isFinite(n) || n < 0) {
-      setDraft(String(value));
+      setDraft(String(safe));
       return;
     }
-    if (n !== value) onCommit(n);
+    if (n !== safe) onCommit(n);
+    else setDraft(String(safe));
   }
 
   return (
     <input
+      ref={inputRef}
       type="number"
       min="0"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
-      onFocus={() => setFocused(true)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
         if (e.key === 'Escape') {
-          setDraft(String(value));
+          setDraft(String(safe));
           e.currentTarget.blur();
         }
       }}
-      style={{ width: '5rem', height: '1.75rem' }}
-      className="px-2 text-right font-mono text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+      className="ml-auto block h-7 w-20 rounded border border-input bg-transparent px-2 text-right font-mono text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
     />
   );
 }

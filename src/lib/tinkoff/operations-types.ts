@@ -3,7 +3,6 @@
 
 import type { MoneyValue } from './types';
 
-/** Сырая операция из T-Invest API. */
 export interface TinkoffOperation {
   id: string;
   parentOperationId: string;
@@ -25,7 +24,6 @@ export interface GetOperationsResponse {
   operations: TinkoffOperation[];
 }
 
-/** Категория операции для UI. */
 export type OperationKind =
   | 'buy'
   | 'sell'
@@ -37,7 +35,6 @@ export type OperationKind =
   | 'output'
   | 'other';
 
-/** Нормализованная операция. */
 export interface Operation {
   id: string;
   /** ISO-8601. */
@@ -49,42 +46,61 @@ export interface Operation {
   lots: number;
   /** Цена за акцию в рублях. 0 для дивидендов/налогов/пополнений. */
   price: number;
-  /** Денежный поток. Отрицательный — отток (покупка, налог, вывод). */
+  /** Денежный поток. Отрицательный — отток. */
   payment: number;
   /** Оригинальное название типа (для отладки). */
   rawType: string;
 }
 
-/** Маппинг T-Invest type → наш OperationKind. */
+/**
+ * Маппинг T-Invest type → OperationKind.
+ * T-Invest может отдавать как enum (OPERATION_TYPE_BUY), так и
+ * локализованные строки на русском — обрабатываем оба варианта.
+ */
 export function operationKindFromRaw(raw: string): OperationKind {
-  switch (raw) {
-    case 'OPERATION_TYPE_BUY':
-    case 'OPERATION_TYPE_BUY_CARD':
-      return 'buy';
-    case 'OPERATION_TYPE_SELL':
-    case 'OPERATION_TYPE_SELL_CARD':
-      return 'sell';
-    case 'OPERATION_TYPE_DIVIDEND':
-    case 'OPERATION_TYPE_DIVIDEND_TAX':
-      return raw === 'OPERATION_TYPE_DIVIDEND_TAX' ? 'tax' : 'dividend';
-    case 'OPERATION_TYPE_COUPON':
-      return 'coupon';
-    case 'OPERATION_TYPE_TAX':
-    case 'OPERATION_TYPE_BOND_TAX':
-    case 'OPERATION_TYPE_INPUT_TAX':
-      return 'tax';
-    case 'OPERATION_TYPE_BROKER_FEE':
-    case 'OPERATION_TYPE_SERVICE_FEE':
-    case 'OPERATION_TYPE_MARGIN_FEE':
-    case 'OPERATION_TYPE_SUCCESS_FEE':
-      return 'fee';
-    case 'OPERATION_TYPE_INPUT':
-    case 'OPERATION_TYPE_INP_MULTI':
-      return 'input';
-    case 'OPERATION_TYPE_OUTPUT':
-    case 'OPERATION_TYPE_OUT_MULTI':
-      return 'output';
-    default:
-      return 'other';
+  const s = raw.toLowerCase();
+
+  // Английские enum
+  if (s === 'operation_type_buy' || s === 'operation_type_buy_card') {
+    return 'buy';
   }
+  if (s === 'operation_type_sell' || s === 'operation_type_sell_card') {
+    return 'sell';
+  }
+  if (s === 'operation_type_dividend') return 'dividend';
+  if (s === 'operation_type_coupon') return 'coupon';
+  if (
+    s === 'operation_type_tax' ||
+    s === 'operation_type_bond_tax' ||
+    s === 'operation_type_input_tax' ||
+    s === 'operation_type_dividend_tax'
+  ) {
+    return 'tax';
+  }
+  if (
+    s === 'operation_type_broker_fee' ||
+    s === 'operation_type_service_fee' ||
+    s === 'operation_type_margin_fee' ||
+    s === 'operation_type_success_fee'
+  ) {
+    return 'fee';
+  }
+  if (s === 'operation_type_input' || s === 'operation_type_inp_multi') {
+    return 'input';
+  }
+  if (s === 'operation_type_output' || s === 'operation_type_out_multi') {
+    return 'output';
+  }
+
+  // Русские строки
+  if (s.includes('покупка ценных бумаг')) return 'buy';
+  if (s.includes('продажа ценных бумаг')) return 'sell';
+  if (s.includes('выплата дивидендов')) return 'dividend';
+  if (s.includes('выплата купона') || s.includes('купонный доход')) return 'coupon';
+  if (s.includes('налог')) return 'tax';
+  if (s.includes('комисси')) return 'fee';
+  if (s.includes('пополнение')) return 'input';
+  if (s.includes('вывод')) return 'output';
+
+  return 'other';
 }

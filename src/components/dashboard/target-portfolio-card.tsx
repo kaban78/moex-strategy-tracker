@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { formatPercent, formatRub } from '@/lib/format';
+import { formatInt, formatPercent, formatRub } from '@/lib/format';
 
 interface Props {
   holdings: TargetWeight[];

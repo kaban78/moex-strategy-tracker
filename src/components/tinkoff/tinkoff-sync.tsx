@@ -2,6 +2,7 @@
 
 import type { Ticker } from '@/types';
 import { useTinkoffSync } from './hooks/use-tinkoff-sync';
+import { useOperationsSync } from './hooks/use-operations-sync';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,16 @@ export function TinkoffSync({ universe }: Props) {
     reset,
   } = useTinkoffSync(universe);
 
+  const {
+    loading: loadingOps,
+    error: opsError,
+    success: opsSuccess,
+    lastSync,
+    operationCount,
+    sync: syncOps,
+    clear: clearOps,
+  } = useOperationsSync();
+
   if (!mounted) {
     return (
       <Card>
@@ -47,6 +58,9 @@ export function TinkoffSync({ universe }: Props) {
         <CardTitle className="flex items-center gap-3 flex-wrap">
           Т-Инвестиции — синхронизация портфеля
           {savedToken && <Badge variant="secondary">токен сохранён</Badge>}
+          {operationCount > 0 && (
+            <Badge variant="outline">{operationCount} операций</Badge>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -105,9 +119,23 @@ export function TinkoffSync({ universe }: Props) {
         )}
 
         {accountId && (
-          <Button onClick={sync} disabled={loadingSync}>
-            {loadingSync ? 'синхронизация...' : 'синхронизировать портфель'}
-          </Button>
+          <div className="flex gap-2 flex-wrap">
+            <Button onClick={sync} disabled={loadingSync}>
+              {loadingSync ? 'синхронизация...' : 'синхронизировать портфель'}
+            </Button>
+            <Button
+              onClick={syncOps}
+              disabled={loadingOps}
+              variant="outline"
+            >
+              {loadingOps ? 'загрузка истории...' : 'загрузить историю операций'}
+            </Button>
+            {operationCount > 0 && (
+              <Button variant="ghost" onClick={clearOps}>
+                очистить историю
+              </Button>
+            )}
+          </div>
         )}
 
         {message && (
@@ -121,9 +149,22 @@ export function TinkoffSync({ universe }: Props) {
           </p>
         )}
 
+        {opsError && (
+          <p className="text-xs text-destructive">История: {opsError}</p>
+        )}
+        {opsSuccess && (
+          <p className="text-xs text-green-500">История: {opsSuccess}</p>
+        )}
+        {lastSync && (
+          <p className="text-xs text-muted-foreground">
+            Последняя синхронизация истории:{' '}
+            {new Date(lastSync).toLocaleString('ru-RU')}
+          </p>
+        )}
+
         <p className="text-xs text-muted-foreground">
-          Синхронизация заменит текущий портфель. Учитываются только акции
-          из IMOEX — облигации, фонды и иностранные бумаги пропускаются.
+          Синхронизация заменит текущий портфель. История операций
+          сохраняется в браузере, ничего не уходит на сервер.
         </p>
       </CardContent>
     </Card>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Position, Ticker } from '@/types';
 import { useDividends } from './hooks/use-dividends';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,11 +36,19 @@ interface TickerGroup {
   lots: number;
   payments: Payment[];
   sum12m: number;
-  /** Сколько лет покрывают выплаты. */
   yearsSpan: number;
-  /** Средняя годовая выплата: sumAll / yearsSpan. */
   avgPerYear: number;
 }
+
+type YearLimit = 1 | 2 | 3 | 5 | 'all';
+
+const YEAR_OPTIONS: { value: YearLimit; label: string }[] = [
+  { value: 1, label: '1 год' },
+  { value: 2, label: '2 года' },
+  { value: 3, label: '3 года' },
+  { value: 5, label: '5 лет' },
+  { value: 'all', label: 'Все' },
+];
 
 function shortDate(iso: string): string {
   const d = new Date(iso);
@@ -51,10 +59,6 @@ function shortDate(iso: string): string {
   return `${dd}.${mm}.${yy}`;
 }
 
-/**
- * Компактное форматирование дивиденда на акцию.
- * Округляет до копеек: 0.32₽ вместо 0.321425305₽.
- */
 function fmtPerShare(v: number): string {
   if (!Number.isFinite(v)) return '—';
   if (v >= 1) return v.toFixed(2).replace(/\.?0+$/, '') + '₽';
@@ -67,6 +71,15 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
     universe,
     portfolioValue,
   });
+
+  const [yearLimit, setYearLimit] = useState<YearLimit>(3);
+
+  const cutoff = useMemo(() => {
+    if (yearLimit === 'all') return null;
+    const d = new Date();
+    d.setUTCFullYear(d.getUTCFullYear() - yearLimit);
+    return d.toISOString().slice(0, 10);
+  }, [yearLimit]);
 
   const groups = useMemo<TickerGroup[]>(() => {
     if (!summary) return [];
@@ -105,21 +118,23 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
     }
 
     for (const g of map.values()) {
-      g.payments.sort(
-        (a, b) =>
-          new Date(b.recordDate).getTime() -
-          new Date(a.recordDate).getTime(),
-      );
+      // Хронология: старые → свежие. Стабильно, не скачет.
+      g.payments.sort((a, b) => {
+        const da = new Date(a.recordDate).getTime();
+        const db = new Date(b.recordDate).getTime();
+        return da - db;
+      });
 
-      // Годы: от первой до последней выплаты включительно.
       if (g.payments.length > 0) {
-        const newest = new Date(g.payments[0].recordDate).getTime();
-        const oldest = new Date(
+        const newest = new Date(
           g.payments[g.payments.length - 1].recordDate,
         ).getTime();
+        const oldest = new Date(g.payments[0].recordDate).getTime();
         const ms = Math.max(0, newest - oldest);
-        // Плюс 1 — потому что от 2023 до 2026 это 4 разных года.
-        g.yearsSpan = Math.max(1, Math.ceil(ms / (365.25 * 24 * 3600 * 1000)) + 1);
+        g.yearsSpan = Math.max(
+          1,
+          Math.ceil(ms / (365.25 * 24 * 3600 * 1000)) + 1,
+        );
         const sumAll = g.payments.reduce((s, p) => s + p.total, 0);
         g.avgPerYear = sumAll / g.yearsSpan;
       }
@@ -170,6 +185,27 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
 
         {groups.length > 0 && (
           <>
+            <div className="flex items-center gap-2 flex-wrap mb-3">
+              <span className="text-xs text-muted-foreground">
+                период:
+              </span>
+              {YEAR_OPTIONS.map((o) => (
+                <button
+                  key={String(o.value)}
+                  type="button"
+                  onClick={() => setYearLimit(o.value)}
+                  className={
+                    'px-3 py-1 text-xs rounded-md border transition-colors ' +
+                    (yearLimit === o.value
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background hover:bg-muted')
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+
             <Table>
               <TableHeader>
                 <TableRow>
@@ -177,52 +213,54 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
                   <TableHead className="text-right w-16">Лотов</TableHead>
                   <TableHead>Выплаты — отсечка / на акцию</TableHead>
                   <TableHead className="text-right">За 12 мес</TableHead>
-                  <TableHead className="text-right">
-                    Средне­годовые
-                  </TableHead>
+                  <TableHead className="text-right">Среднегодовые</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {groups.map((g) => (
-                  <TableRow key={g.ticker}>
-                    <TableCell className="font-mono align-top">
-                      {g.ticker}
-                    </TableCell>
-                    <TableCell className="text-right align-top">
-                      {g.lots}
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <div className="flex flex-wrap gap-1">
-                        {g.payments.map((p, i) => (
-                          <span
-                            key={p.recordDate + '-' + i}
-                            className={
-                              'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono whitespace-nowrap ' +
-                              (p.future
-                                ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
-                                : 'bg-muted text-muted-foreground border border-transparent')
-                            }
-                            title={
-                              p.paymentDate
-                                ? `Выплата ${shortDate(p.paymentDate)}: ${formatRub(p.total)}`
-                                : `Сумма: ${formatRub(p.total)}`
-                            }
-                          >
-                            {shortDate(p.recordDate)}
-                            <span className="opacity-50">·</span>
-                            {fmtPerShare(p.perShare)}
-                          </span>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right align-top font-medium">
-                      {formatRub(g.sum12m)}
-                    </TableCell>
-                    <TableCell className="text-right align-top text-muted-foreground">
-                      {formatRub(g.avgPerYear)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {groups.map((g) => {
+                  const visible = cutoff
+                    ? g.payments.filter(
+                        (p) => p.recordDate.slice(0, 10) >= cutoff,
+                      )
+                    : g.payments;
+
+                  return (
+                    <TableRow key={g.ticker}>
+                      <TableCell className="font-mono align-top">
+                        {g.ticker}
+                      </TableCell>
+                      <TableCell className="text-right align-top">
+                        {g.lots}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="flex flex-wrap gap-1.5">
+                          {visible.map((p, i) => (
+                            <span
+                              key={p.recordDate + '-' + i}
+                              className={
+                                'inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono whitespace-nowrap ' +
+                                (p.future
+                                  ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
+                                  : 'bg-muted text-muted-foreground border border-transparent')
+                              }
+                              title={`Выплата ${shortDate(p.paymentDate)}: ${formatRub(p.total)}`}
+                            >
+                              {shortDate(p.recordDate)}
+                              <span className="opacity-50">·</span>
+                              {fmtPerShare(p.perShare)}
+                            </span>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right align-top font-medium">
+                        {formatRub(g.sum12m)}
+                      </TableCell>
+                      <TableCell className="text-right align-top text-muted-foreground">
+                        {formatRub(g.avgPerYear)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
 
@@ -236,7 +274,7 @@ export function DividendsCard({ positions, universe, portfolioValue }: Props) {
                 уже выплаченные
               </span>
               <span className="ml-auto">
-                Среднегодовые — сумма всех выплат / число лет, за которые они есть
+                Среднегодовые — сумма всех выплат / число лет
               </span>
             </div>
           </>

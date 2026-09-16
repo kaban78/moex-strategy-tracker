@@ -15,6 +15,7 @@ import { DriftCard } from './drift-card';
 import { RebalanceCard } from './rebalance-card';
 import { DividendsCard } from './dividends-card';
 import { PortfolioStructureCard } from './portfolio-structure-card';
+import { OperationsCard } from './operations-card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface Props {
@@ -97,10 +98,11 @@ export function Dashboard({ universe }: Props) {
       <TinkoffSync universe={universe} />
 
       <Tabs defaultValue="portfolio" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 max-w-lg">
+        <TabsList className="grid w-full grid-cols-4 max-w-2xl">
           <TabsTrigger value="portfolio">Портфель</TabsTrigger>
           <TabsTrigger value="rebalance">Ребалансировка</TabsTrigger>
           <TabsTrigger value="dividends">Дивиденды</TabsTrigger>
+          <TabsTrigger value="operations">Операции</TabsTrigger>
         </TabsList>
 
         <TabsContent value="portfolio" className="space-y-6 mt-6">
@@ -141,6 +143,10 @@ export function Dashboard({ universe }: Props) {
             universe={universe}
             portfolioValue={portfolioValue}
           />
+        </TabsContent>
+
+        <TabsContent value="operations" className="space-y-6 mt-6">
+          <OperationsCard />
         </TabsContent>
       </Tabs>
 
