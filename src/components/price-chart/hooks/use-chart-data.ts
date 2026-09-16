@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { IChartApi, ISeriesApi, Time, CandlestickData } from 'lightweight-charts';
+import type {
+  IChartApi,
+  ISeriesApi,
+  Time,
+  CandlestickData,
+} from 'lightweight-charts';
 import { getCached, setCached } from '@/lib/moex/history-cache';
 import { POLL_MS } from '../constants';
 import type { Candle } from '../types';
@@ -26,10 +31,6 @@ interface Result {
   firstDataLoaded: boolean;
 }
 
-/**
- * Загружает свечи: клиентский кэш → API → polling каждые POLL_MS.
- * Сохраняет данные в series. Возвращает состояние для UI.
- */
 export function useChartData({
   open,
   chartReady,
@@ -46,6 +47,10 @@ export function useChartData({
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [firstDataLoaded, setFirstDataLoaded] = useState(false);
   const dataLengthRef = useRef(0);
+
+  // barCountRef — чтобы не ререндерить state каждые 60 сек,
+  // когда barCount не изменился.
+  const barCountRef = useRef(0);
 
   useEffect(() => {
     if (!open || !chartReady || !ticker) return;
@@ -75,8 +80,13 @@ export function useChartData({
       const prevRange = chart.timeScale().getVisibleLogicalRange();
       series.setData(formatted);
       dataLengthRef.current = raw.length;
-      setAllData(raw);
-      setBarCount(raw.length);
+
+      // Обновляем state только если изменилось число бар.
+      if (raw.length !== barCountRef.current) {
+        barCountRef.current = raw.length;
+        setAllData(raw);
+        setBarCount(raw.length);
+      }
 
       if (first) {
         first = false;

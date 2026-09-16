@@ -1,130 +1,45 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import {
-  createChart,
-  LineSeries,
-  ColorType,
-  CrosshairMode,
-  type IChartApi,
-  type LineData,
-  type Time,
-} from 'lightweight-charts';
 import type { MonthSnapshot } from '@/lib/backtest/types';
-import { formatRub } from '@/lib/format';
+import { LightweightLineChart, type LineSeriesConfig } from '@/components/charts/lightweight-line-chart';
 
 interface Props {
   snapshots: MonthSnapshot[];
 }
 
 export function BacktestChart({ snapshots }: Props) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || snapshots.length === 0) return;
-
-    let raf = 0;
-    const init = () => {
-      if (!hostRef.current) return;
-      const w = host.clientWidth;
-      const h = host.clientHeight;
-      if (w < 20 || h < 20) {
-        raf = requestAnimationFrame(init);
-        return;
-      }
-
-      const chart = createChart(host, {
-        autoSize: true,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#a3a3a3',
-          fontSize: 11,
-          fontFamily: 'inherit',
-          attributionLogo: false,
-        },
-        grid: {
-          vertLines: { color: '#333', style: 1 },
-          horzLines: { color: '#333', style: 1 },
-        },
-        crosshair: {
-          mode: CrosshairMode.Normal,
-          vertLine: { color: '#555', width: 1, style: 2, labelBackgroundColor: '#5a5a5a' },
-          horzLine: { color: '#555', width: 1, style: 2, labelBackgroundColor: '#5a5a5a' },
-        },
-        rightPriceScale: { borderColor: '#4a4a4a' },
-        timeScale: {
-          borderColor: '#4a4a4a',
-          timeVisible: false,
-          secondsVisible: false,
-          fixLeftEdge: true,
-          fixRightEdge: true,
-        },
-        localization: {
-          priceFormatter: (p: number) => formatRub(p),
-        },
-      });
-
-      const investedSeries = chart.addSeries(LineSeries, {
-        color: '#737373',
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        title: 'Вложено',
-      });
-
-      const imoexSeries = chart.addSeries(LineSeries, {
-        color: '#3b82f6',
-        lineWidth: 1,
-        priceLineVisible: false,
-        title: 'IMOEX',
-      });
-
-      const mcftrSeries = chart.addSeries(LineSeries, {
-        color: '#8b5cf6',
-        lineWidth: 1,
-        priceLineVisible: false,
-        title: 'MCFTR',
-      });
-
-      const portfolioSeries = chart.addSeries(LineSeries, {
-        color: '#22c55e',
-        lineWidth: 2,
-        priceLineVisible: false,
-        title: 'Портфель',
-      });
-
-      investedSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.invested })),
-      );
-      imoexSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.benchmarkValue })),
-      );
-      mcftrSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.benchmarkTotalReturnValue })),
-      );
-      portfolioSeries.setData(
-        snapshots.map((s) => ({ time: s.date as Time, value: s.totalValue })),
-      );
-
-      chart.timeScale().fitContent();
-      chartRef.current = chart;
-    };
-
-    raf = requestAnimationFrame(init);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-      }
-    };
-  }, [snapshots]);
-
   if (snapshots.length === 0) return null;
 
-  return <div ref={hostRef} className="w-full h-[440px]" />;
+  const series: LineSeriesConfig[] = [
+    {
+      data: snapshots.map((s) => ({ time: s.date, value: s.invested })),
+      color: '#737373',
+      width: 1,
+      dashed: true,
+      title: 'Вложено',
+    },
+    {
+      data: snapshots.map((s) => ({ time: s.date, value: s.benchmarkValue })),
+      color: '#3b82f6',
+      width: 1,
+      title: 'IMOEX',
+    },
+    {
+      data: snapshots.map((s) => ({
+        time: s.date,
+        value: s.benchmarkTotalReturnValue,
+      })),
+      color: '#8b5cf6',
+      width: 1,
+      title: 'MCFTR',
+    },
+    {
+      data: snapshots.map((s) => ({ time: s.date, value: s.totalValue })),
+      color: '#22c55e',
+      width: 2,
+      title: 'Портфель',
+    },
+  ];
+
+  return <LightweightLineChart series={series} height={440} />;
 }
